@@ -2,13 +2,15 @@ import requests
 import smtplib
 import os
 import time
+import itertools
 from email.mime.text import MIMEText
 from dotenv import load_dotenv
 from tronpy import Tron
+from tronpy.providers import HTTPProvider
 from tronpy.keys import PrivateKey
 from decimal import Decimal
 
-# Load environment variables from .env file
+# Load .env variables
 load_dotenv()
 
 EMAIL_SENDER = os.getenv("EMAIL_SENDER")
@@ -17,25 +19,33 @@ EMAIL_RECEIVER = os.getenv("EMAIL_RECEIVER")
 WALLET_ADDRESSES = os.getenv("WALLET_ADDRESSES", "").split(",")
 VANITY_ADDRESSES = os.getenv("VANITY_ADDRESSES", "").split(",")
 VANITY_PRIVATE_KEYS = os.getenv("VANITY_PRIVATE_KEYS", "").split(",")
+TRON_API_KEYS = os.getenv("TRON_API_KEYS", "").split(",")
 
-print("Loaded environment variables:")
-print(f"EMAIL_SENDER: {EMAIL_SENDER}")
-print(f"EMAIL_RECEIVER: {EMAIL_RECEIVER}")
-print(f"WALLET_ADDRESSES: {WALLET_ADDRESSES}")
-print(f"VANITY_ADDRESSES: {VANITY_ADDRESSES}")
-
+# Validate ENV
 if not all([EMAIL_SENDER, EMAIL_PASSWORD, EMAIL_RECEIVER]):
-    print("❌ Missing email configuration in environment variables. Exiting.")
+    print("❌ Missing email credentials. Exiting.")
     exit(1)
-
-if not WALLET_ADDRESSES or WALLET_ADDRESSES == ['']:
-    print("❌ No wallet addresses provided. Exiting.")
+if not WALLET_ADDRESSES or WALLET_ADDRESSES == [""]:
+    print("❌ WALLET_ADDRESSES missing. Exiting.")
     exit(1)
-
 if len(WALLET_ADDRESSES) != len(VANITY_ADDRESSES) or len(WALLET_ADDRESSES) != len(VANITY_PRIVATE_KEYS):
-    print("❌ Count mismatch between WALLET_ADDRESSES, VANITY_ADDRESSES, and VANITY_PRIVATE_KEYS. Exiting.")
+    print("❌ Wallet, vanity, or private key counts mismatch. Exiting.")
+    exit(1)
+if not TRON_API_KEYS or TRON_API_KEYS == [""]:
+    print("❌ TRON_API_KEYS missing. Exiting.")
     exit(1)
 
+# API Key Rotator
+api_key_cycle = itertools.cycle(TRON_API_KEYS)
+
+def get_tron_client():
+    api_key = next(api_key_cycle).strip()
+    headers = {
+        "TRON-PRO-API-KEY": api_key
+    }
+    return Tron(provider=HTTPProvider(endpoint_uri="https://api.trongrid.io", headers=headers))
+
+# Store last known txid per wallet
 last_tx_ids = {}
 
 def get_latest_transaction(wallet_address):
@@ -43,16 +53,12 @@ def get_latest_transaction(wallet_address):
         url = f"https://apilist.tronscanapi.com/api/transaction?sort=-timestamp&count=true&limit=1&start=0&address={wallet_address}"
         response = requests.get(url, timeout=10)
         if response.status_code != 200:
-            print(f"⚠️ API error for {wallet_address}: HTTP {response.status_code}")
+            print(f"⚠️ API error for {wallet_address}: {response.status_code}")
             return None
         data = response.json()
-        transactions = data.get("data", [])
-        if not transactions:
-            print(f"ℹ️ No transactions found for {wallet_address}")
-            return None
-        return transactions[0]
+        return data.get("data", [None])[0]
     except Exception as e:
-        print(f"❌ Error fetching transaction for {wallet_address}: {e}")
+        print(f"❌ Error getting tx for {wallet_address}: {e}")
         return None
 
 def send_email(subject, body):
@@ -62,73 +68,65 @@ def send_email(subject, body):
         msg["From"] = EMAIL_SENDER
         msg["To"] = EMAIL_RECEIVER
 
-        print("📤 Sending email...")
         with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
             server.login(EMAIL_SENDER, EMAIL_PASSWORD)
             server.sendmail(EMAIL_SENDER, EMAIL_RECEIVER, msg.as_string())
-        print("✅ Email sent.\n")
+        print("✅ Email sent.")
     except Exception as e:
-        print(f"❌ Email sending failed: {e}")
+        print("❌ Email send error:", e)
 
 def send_trx(from_address, priv_key_hex, recipient, amount=Decimal("0.00001")):
     try:
-        print(f"🚀 Preparing to send {amount} TRX from {from_address} to {recipient}...")
-
-        client = Tron()
-        priv_key = PrivateKey.fromhex(priv_key_hex)
-
-        # Check balance first
+        print(f"🔁 Sending {amount} TRX from {from_address} to {recipient}")
+        client = get_tron_client()
+        priv_key = PrivateKey(bytes.fromhex(priv_key_hex))
         balance = client.get_account_balance(from_address)
-        print(f"💰 Vanity address {from_address} balance: {balance} TRX")
-        if balance < amount + Decimal("0.001"):  # keep some margin for fees
-            print(f"⚠️ Insufficient balance in vanity address {from_address}. Needed: {amount} + fee")
-            return None
+
+        if balance < amount:
+            print(f"⚠️ Not enough balance. Need {amount}, have {balance}")
+            return
 
         txn = (
-            client.trx.transfer(from_address, recipient, int(amount * Decimal(1e6)))
+            client.trx.transfer(from_address, recipient, int(amount * Decimal("1000000")))
             .memo("auto-reward")
             .build()
             .sign(priv_key)
         )
-
-        print("📡 Broadcasting transaction...")
-        result = txn.broadcast()
-        print(f"📬 Broadcast response: {result}")
-
-        print("⏳ Waiting for transaction confirmation...")
-        receipt = txn.wait()
-        txid = receipt.get('transaction', {}).get('txID', 'unknown') if isinstance(receipt, dict) else 'unknown'
-        print(f"✅ Transaction confirmed! TxID: {txid}")
-
-        return receipt
+        result = txn.broadcast().wait()
+        print(f"✅ TRX Sent. TxID: {result.get('id', result)}")
     except Exception as e:
-        print(f"❌ Failed to send TRX: {e}")
-        return None
+        print("❌ Failed to send TRX:", e)
 
-# Optionally send a test email at start
+# Optional test email
 if os.getenv("SEND_TEST_EMAIL", "false").lower() == "true":
-    print("🧪 Sending test email...")
-    send_email("✅ Monitor Started", "This is a test email from your TRON monitor on Render.")
-    print("✅ Test email sent.\n")
+    print("📧 Sending test email...")
+    send_email("✅ TRON Monitor Running", "Your TRON monitor is now active.")
 
-print("🚀 Starting wallet monitoring loop...\n")
+# Monitor loop
+print("🚀 Starting monitor...\n")
 
 while True:
     try:
         for i, address in enumerate(WALLET_ADDRESSES):
-            print(f"🔍 Checking latest transaction for wallet: {address}")
+            print(f"🔍 Checking wallet: {address}")
             tx = get_latest_transaction(address)
-            if tx:
-                tx_id = tx.get("hash")
-                if last_tx_ids.get(address) != tx_id:
-                    last_tx_ids[address] = tx_id
+            if not tx:
+                continue
 
-                    amount = int(tx.get("contractData", {}).get("amount", 0)) / 1e6
-                    sender = tx.get("ownerAddress")
-                    receiver = tx.get("toAddress")
+            tx_id = tx.get("hash")
+            if last_tx_ids.get(address) == tx_id:
+                print("ℹ️ No new tx.")
+                continue
 
-                    subject = f"🔔 New USDT Transaction for {address}"
-                    body = f"""
+            # Mark new tx
+            last_tx_ids[address] = tx_id
+
+            amount = int(tx.get("contractData", {}).get("amount", 0)) / 1e6
+            sender = tx.get("ownerAddress")
+            receiver = tx.get("toAddress")
+
+            subject = f"🔔 New USDT Transaction for {address}"
+            body = f"""
 New USDT transaction detected:
 
 Wallet: {address}
@@ -137,27 +135,21 @@ From: {sender}
 To: {receiver}
 TxID: {tx_id}
 
-View transaction: https://tronscan.org/#/transaction/{tx_id}
+🔗 https://tronscan.org/#/transaction/{tx_id}
 """
-                    print("📨 New transaction detected, sending email...")
-                    send_email(subject, body)
 
-                    # Send reward TRX from vanity address to sender if sender exists
-                    vanity_address = VANITY_ADDRESSES[i]
-                    vanity_key = VANITY_PRIVATE_KEYS[i]
-                    if sender:
-                        print(f"💸 Sending reward TRX to sender: {sender}")
-                        send_trx(vanity_address, vanity_key, sender)
-                    else:
-                        print("⚠️ No sender found in transaction, skipping TRX send.")
-                else:
-                    print("ℹ️ No new transaction.")
-            else:
-                print("ℹ️ No transactions found or error fetching.")
+            send_email(subject, body)
 
-            time.sleep(1)  # delay between wallet checks
+            # Send reward
+            if sender:
+                vanity_address = VANITY_ADDRESSES[i]
+                vanity_key = VANITY_PRIVATE_KEYS[i]
+                send_trx(vanity_address, vanity_key, sender)
+
+            time.sleep(2)  # spacing between wallets
+
     except Exception as e:
-        print(f"❌ Error in monitoring loop: {e}")
+        print("❌ Monitor loop error:", e)
 
-    print("⏳ Sleeping 30 seconds...\n")
-    time.sleep(30)
+    print("⏳ Waiting 60s...\n")
+    time.sleep(60)

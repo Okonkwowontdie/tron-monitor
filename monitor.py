@@ -2,9 +2,11 @@ import requests
 import smtplib
 import os
 import time
+import itertools
 from email.mime.text import MIMEText
 from dotenv import load_dotenv
 from tronpy import Tron
+from tronpy.providers import HTTPProvider
 from tronpy.keys import PrivateKey
 from decimal import Decimal
 
@@ -16,10 +18,9 @@ EMAIL_SENDER = os.getenv("EMAIL_SENDER")
 EMAIL_PASSWORD = os.getenv("EMAIL_PASSWORD")
 EMAIL_RECEIVER = os.getenv("EMAIL_RECEIVER")
 WALLET_ADDRESSES = os.getenv("WALLET_ADDRESSES", "").split(",")
-
-# Each watched address has a corresponding vanity private key (comma-separated)
 VANITY_ADDRESSES = os.getenv("VANITY_ADDRESSES", "").split(",")
 VANITY_PRIVATE_KEYS = os.getenv("VANITY_PRIVATE_KEYS", "").split(",")
+TRON_API_KEYS = os.getenv("TRON_API_KEYS", "").split(",")
 
 # Debug: Print loaded ENV status
 print("Loaded ENV:")
@@ -37,6 +38,19 @@ if not WALLET_ADDRESSES or WALLET_ADDRESSES == ['']:
 if len(WALLET_ADDRESSES) != len(VANITY_ADDRESSES) or len(WALLET_ADDRESSES) != len(VANITY_PRIVATE_KEYS):
     print("Wallets, vanity addresses, and keys count mismatch. Exiting.")
     exit(1)
+if not TRON_API_KEYS or TRON_API_KEYS == [""]:
+    print("No TRON_API_KEYS found in .env. Exiting.")
+    exit(1)
+
+# Setup API key rotation
+api_key_cycle = itertools.cycle(TRON_API_KEYS)
+
+def get_tron_client():
+    api_key = next(api_key_cycle).strip()
+    headers = {
+        "TRON-PRO-API-KEY": api_key
+    }
+    return Tron(provider=HTTPProvider(api_key="https://api.trongrid.io", headers=headers))
 
 # Transaction tracking
 last_tx_ids = {}
@@ -71,11 +85,11 @@ def send_email(subject, body):
     except Exception as e:
         print("Email sending failed:", e)
 
-# Helper: Send TRX reward with balance check and Decimal fix
+# Helper: Send TRX reward with balance check and logging
 def send_trx(from_address, priv_key_hex, recipient, amount=Decimal("0.00001")):
     try:
         print(f"Preparing to send {amount} TRX from {from_address} to {recipient}")
-        client = Tron()
+        client = get_tron_client()
         priv_key = PrivateKey(bytes.fromhex(priv_key_hex))
         balance = client.get_account_balance(from_address)
         print(f"Current balance of {from_address}: {balance} TRX")
@@ -139,9 +153,9 @@ View: https://tronscan.org/#/transaction/{tx_id}
                         send_trx(vanity_address, vanity_key, sender)
                 else:
                     print("No new transaction.")
-            time.sleep(1)
+            time.sleep(5)  # Slightly reduce frequency to avoid rate limit
     except Exception as e:
         print("Error in monitoring loop:", e)
 
-    print("Sleeping 30s...\n")
-    time.sleep(30)
+    print("Sleeping 60s...\n")
+    time.sleep(60)

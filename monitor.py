@@ -9,6 +9,8 @@ from tronpy.keys import PrivateKey
 from decimal import Decimal
 
 load_dotenv()
+print(f"Loaded TRONGRID_API_KEY: '{TRONGRID_API_KEY}'")
+
 
 EMAIL_SENDER = os.getenv("EMAIL_SENDER")
 EMAIL_PASSWORD = os.getenv("EMAIL_PASSWORD")

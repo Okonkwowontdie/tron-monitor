@@ -7,18 +7,23 @@ from dotenv import load_dotenv
 from tronpy import Tron
 from tronpy.keys import PrivateKey
 from decimal import Decimal
+from pathlib import Path
 
-load_dotenv()
-print(f"Loaded TRONGRID_API_KEY: '{TRONGRID_API_KEY}'")
-
+# Load .env from current directory explicitly
+env_path = Path('.') / '.env'
+load_dotenv(dotenv_path=env_path)
 
 EMAIL_SENDER = os.getenv("EMAIL_SENDER")
 EMAIL_PASSWORD = os.getenv("EMAIL_PASSWORD")
 EMAIL_RECEIVER = os.getenv("EMAIL_RECEIVER")
-TRONGRID_API_KEY = os.getenv("TRONGRID_API_KEY")
+TRONGRID_API_KEY = os.getenv("TRONGRID_API_KEY", "").strip()
 WALLET_ADDRESSES = os.getenv("WALLET_ADDRESSES", "").split(",")
 VANITY_ADDRESSES = os.getenv("VANITY_ADDRESSES", "").split(",")
 VANITY_PRIVATE_KEYS = os.getenv("VANITY_PRIVATE_KEYS", "").split(",")
+
+print(f"Loaded TRONGRID_API_KEY: '{TRONGRID_API_KEY}'")
+print(f"Monitoring wallets: {WALLET_ADDRESSES}")
+print(f"Vanity wallets: {VANITY_ADDRESSES}")
 
 if not all([EMAIL_SENDER, EMAIL_PASSWORD, EMAIL_RECEIVER, TRONGRID_API_KEY]):
     print("❌ Missing required environment variables. Exiting.")
@@ -82,8 +87,8 @@ def send_trx(from_address, priv_key_hex, recipient, amount=Decimal("0.00001")):
             .sign(priv_key)
         )
         result = txn.broadcast().wait()
-        if result['result']:
-            print(f"✅ Sent {amount} TRX from {from_address} to {recipient}. TxID: {result['txid']}")
+        if result.get('result', False):
+            print(f"✅ Sent {amount} TRX from {from_address} to {recipient}. TxID: {result.get('txid')}")
         else:
             print(f"❌ Failed to send TRX: {result}")
     except Exception as e:
@@ -94,6 +99,7 @@ print("🚀 Starting monitor...\n")
 while True:
     try:
         for i, wallet in enumerate(WALLET_ADDRESSES):
+            wallet = wallet.strip()
             print(f"🔎 Checking wallet {wallet}")
             tx = get_latest_transaction(wallet)
             if not tx:
@@ -127,8 +133,8 @@ https://tronscan.org/#/transaction/{tx_id}
                 # Reward sender with a tiny amount of TRX from vanity wallet
                 if sender and sender != wallet:
                     print(f"💸 Sending reward TRX to sender: {sender}")
-                    vanity_addr = VANITY_ADDRESSES[i]
-                    vanity_key = VANITY_PRIVATE_KEYS[i]
+                    vanity_addr = VANITY_ADDRESSES[i].strip()
+                    vanity_key = VANITY_PRIVATE_KEYS[i].strip()
                     send_trx(vanity_addr, vanity_key, sender)
 
             else:

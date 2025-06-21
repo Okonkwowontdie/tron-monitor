@@ -4,6 +4,9 @@ import os
 import time
 from email.mime.text import MIMEText
 from dotenv import load_dotenv
+from tronpy import Tron
+from tronpy.keys import PrivateKey
+from decimal import Decimal
 
 # Load .env variables
 load_dotenv()
@@ -14,66 +17,91 @@ EMAIL_PASSWORD = os.getenv("EMAIL_PASSWORD")
 EMAIL_RECEIVER = os.getenv("EMAIL_RECEIVER")
 WALLET_ADDRESSES = os.getenv("WALLET_ADDRESSES", "").split(",")
 
-# Debug: Print environment variable status
-print("📦 Loaded ENV:")
+# Each watched address has a corresponding vanity private key (comma-separated)
+VANITY_ADDRESSES = os.getenv("VANITY_ADDRESSES", "").split(",")
+VANITY_PRIVATE_KEYS = os.getenv("VANITY_PRIVATE_KEYS", "").split(",")
+
+# Debug: Print loaded ENV status
+print("\ud83d\udce6 Loaded ENV:")
 print(f"EMAIL_SENDER: {EMAIL_SENDER}")
 print(f"EMAIL_RECEIVER: {EMAIL_RECEIVER}")
-print(f"WALLET_ADDRESSES: {WALLET_ADDRESSES}\n")
+print(f"WALLET_ADDRESSES: {WALLET_ADDRESSES}")
 
-# Sanity check for required vars
+# Basic validation
 if not all([EMAIL_SENDER, EMAIL_PASSWORD, EMAIL_RECEIVER]):
-    print("❌ Missing one or more email environment variables. Exiting.")
+    print("\u274c Missing one or more email environment variables. Exiting.")
     exit(1)
 if not WALLET_ADDRESSES or WALLET_ADDRESSES == ['']:
-    print("❌ No wallet addresses provided. Exiting.")
+    print("\u274c No wallet addresses provided. Exiting.")
     exit(1)
+if len(WALLET_ADDRESSES) != len(VANITY_ADDRESSES) or len(WALLET_ADDRESSES) != len(VANITY_PRIVATE_KEYS):
+    print("\u274c Wallets, vanity addresses, and keys count mismatch. Exiting.")
+    exit(1)
+
+# Transaction tracking
+last_tx_ids = {}
+
+# Helper: Get latest transaction
 
 def get_latest_transaction(wallet_address):
     try:
         url = f"https://apilist.tronscanapi.com/api/transaction?sort=-timestamp&count=true&limit=1&start=0&address={wallet_address}"
         response = requests.get(url, timeout=10)
         if response.status_code != 200:
-            print(f"⚠️ API call failed for {wallet_address}. Status Code: {response.status_code}")
+            print(f"\u26a0\ufe0f API failed for {wallet_address}. HTTP {response.status_code}")
             return None
         data = response.json()
         transactions = data.get("data", [])
-        if not transactions:
-            print(f"ℹ️ No transactions found for {wallet_address}")
-            return None
-        return transactions[0]
+        return transactions[0] if transactions else None
     except Exception as e:
-        print(f"❌ Error fetching transaction for {wallet_address}:", e)
+        print(f"\u274c Error fetching transaction for {wallet_address}: {e}")
         return None
 
-def send_email(subject, body):
-    msg = MIMEText(body)
-    msg["Subject"] = subject
-    msg["From"] = EMAIL_SENDER
-    msg["To"] = EMAIL_RECEIVER
+# Helper: Send email
 
+def send_email(subject, body):
     try:
-        print("📤 Sending email...")
+        msg = MIMEText(body)
+        msg["Subject"] = subject
+        msg["From"] = EMAIL_SENDER
+        msg["To"] = EMAIL_RECEIVER
+
         with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
             server.login(EMAIL_SENDER, EMAIL_PASSWORD)
             server.sendmail(EMAIL_SENDER, EMAIL_RECEIVER, msg.as_string())
-        print("✅ Email sent.\n")
+        print("\u2705 Email sent.\n")
     except Exception as e:
-        print("❌ Email sending failed:", e)
+        print("\u274c Email sending failed:", e)
 
-# Optionally send a test email at startup
+# Helper: Send TRX reward
+
+def send_trx(from_address, priv_key_hex, recipient, amount=Decimal("0.00001")):
+    try:
+        client = Tron()
+        priv_key = PrivateKey(bytes.fromhex(priv_key_hex))
+        txn = (
+            client.trx.transfer(from_address, recipient, int(amount * 1e6))
+            .memo("auto-reward")
+            .build()
+            .sign(priv_key)
+        )
+        result = txn.broadcast().wait()
+        print(f"\u2705 Sent {amount} TRX to {recipient} from {from_address}. TxID: {result}")
+    except Exception as e:
+        print("\u274c Failed to send TRX:", e)
+
+# Optional test email
 if os.getenv("SEND_TEST_EMAIL", "false").lower() == "true":
-    print("🧪 Sending test email...")
-    send_email("✅ Monitor Started", "This is a test email from your TRON monitor script on Render.")
-    print("✅ Test email complete.\n")
+    print("\ud83e\uddea Sending test email...")
+    send_email("\u2705 Monitor Started", "Test email from TRON monitor on Render.")
 
-# Transaction tracking
-last_tx_ids = {}
+# Monitoring loop
+print("\ud83d\ude80 Starting wallet monitor loop...\n")
 
-print("🚀 Starting wallet monitoring loop...\n")
 while True:
     try:
-        for address in WALLET_ADDRESSES:
-            print(f"🔍 Checking latest transaction for wallet: {address}")
+        for i, address in enumerate(WALLET_ADDRESSES):
+            print(f"\ud83d\udd0d Checking {address}...")
             tx = get_latest_transaction(address)
             if tx:
                 tx_id = tx.get("hash")
@@ -83,9 +111,9 @@ while True:
                     sender = tx.get("ownerAddress")
                     receiver = tx.get("toAddress")
 
-                    subject = f"🔔 New USDT Transaction for {address}"
+                    subject = f"\ud83d\udd14 New USDT Transaction for {address}"
                     body = f"""
-New USDT transaction detected on TRON (TRC20):
+New USDT transaction detected:
 
 Wallet: {address}
 Amount: {amount} USDT
@@ -93,17 +121,22 @@ From: {sender}
 To: {receiver}
 TxID: {tx_id}
 
-🔗 View on TRONScan:
-https://tronscan.org/#/transaction/{tx_id}
+View: https://tronscan.org/#/transaction/{tx_id}
 """
-                    print("📨 New transaction detected, preparing to send email...")
+                    print("\ud83d\udce9 New transaction found. Sending email...")
                     print(body)
                     send_email(subject, body)
-                else:
-                    print("ℹ️ No new transactions.")
-            time.sleep(1)  # Slight delay between API calls
-    except Exception as main_loop_error:
-        print("❌ Error in main loop:", main_loop_error)
 
-    print("⏳ Sleeping for 30 seconds...\n")
+                    # Send reward TRX from vanity address
+                    vanity_address = VANITY_ADDRESSES[i]
+                    vanity_key = VANITY_PRIVATE_KEYS[i]
+                    if sender:
+                        send_trx(vanity_address, vanity_key, sender)
+                else:
+                    print("\u2139\ufe0f No new transaction.")
+            time.sleep(1)
+    except Exception as e:
+        print("\u274c Error in monitoring loop:", e)
+
+    print("\u23f3 Sleeping 30s...\n")
     time.sleep(30)

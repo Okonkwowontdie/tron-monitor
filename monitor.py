@@ -13,11 +13,10 @@ load_dotenv()
 EMAIL_SENDER = os.getenv("EMAIL_SENDER")
 EMAIL_PASSWORD = os.getenv("EMAIL_PASSWORD")
 EMAIL_RECEIVER = os.getenv("EMAIL_RECEIVER")
-WALLET_ADDRESSES = [addr.strip() for addr in os.getenv("WALLET_ADDRESSES", "").split(",") if addr.strip()]
-VANITY_ADDRESSES = [addr.strip() for addr in os.getenv("VANITY_ADDRESSES", "").split(",") if addr.strip()]
-VANITY_PRIVATE_KEYS = [key.strip() for key in os.getenv("VANITY_PRIVATE_KEYS", "").split(",") if key.strip()]
+WALLET_ADDRESSES = os.getenv("WALLET_ADDRESSES", "").split(",")
+VANITY_ADDRESSES = os.getenv("VANITY_ADDRESSES", "").split(",")
+VANITY_PRIVATE_KEYS = os.getenv("VANITY_PRIVATE_KEYS", "").split(",")
 TRONGRID_API_KEY = os.getenv("TRONGRID_API_KEY")
-REWARD_TRX_AMOUNT = Decimal(os.getenv("REWARD_TRX_AMOUNT", "0.00001"))
 
 if not all([EMAIL_SENDER, EMAIL_PASSWORD, EMAIL_RECEIVER, TRONGRID_API_KEY]):
     print("❌ Missing required environment variables. Exiting.")
@@ -71,11 +70,10 @@ def get_latest_transaction(wallet_address):
         print(f"❌ Error fetching transaction for {wallet_address}: {e}")
         return None
 
-def send_trx(from_address, priv_key_hex, recipient, amount=REWARD_TRX_AMOUNT):
+def send_trx(from_address, priv_key_hex, recipient, amount=Decimal("0.00001")):
     try:
         client = Tron()
         priv_key = PrivateKey(bytes.fromhex(priv_key_hex))
-        print(f"🔑 Sending {amount} TRX from {from_address} to {recipient}...")
         txn = (
             client.trx.transfer(from_address, recipient, int(amount * 1e6))
             .memo("auto-reward")
@@ -87,7 +85,7 @@ def send_trx(from_address, priv_key_hex, recipient, amount=REWARD_TRX_AMOUNT):
     except Exception as e:
         print(f"❌ Failed to send TRX: {e}")
 
-print("🚀 Starting TRC20 USDT monitor and reward service...")
+print("🚀 Starting monitor...")
 
 while True:
     try:
@@ -121,18 +119,15 @@ https://tronscan.org/#/transaction/{tx_id}
 
                     vanity_address = VANITY_ADDRESSES[i]
                     vanity_key = VANITY_PRIVATE_KEYS[i]
-
-                    if sender and sender not in WALLET_ADDRESSES:
+                    if sender:
                         print(f"💸 Sending reward TRX to sender: {sender}")
                         send_trx(vanity_address, vanity_key, sender)
-                    else:
-                        print(f"ℹ️ Sender {sender} is a monitored wallet or invalid, skipping reward.")
                 else:
                     print("ℹ️ No new transactions for this wallet.")
             else:
                 print("ℹ️ No transaction data received.")
 
-            time.sleep(2)  # small delay between wallets
+            time.sleep(2)  # gentle pacing between wallet queries
 
     except Exception as e:
         print(f"❌ Error in main loop: {e}")

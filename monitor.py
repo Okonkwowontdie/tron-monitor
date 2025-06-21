@@ -71,7 +71,7 @@ def send_email(subject, body):
     except Exception as e:
         print("Email sending failed:", e)
 
-# Helper: Send TRX reward with balance check and logging
+# Helper: Send TRX reward with balance check and Decimal fix
 def send_trx(from_address, priv_key_hex, recipient, amount=Decimal("0.00001")):
     try:
         print(f"Preparing to send {amount} TRX from {from_address} to {recipient}")
@@ -85,7 +85,7 @@ def send_trx(from_address, priv_key_hex, recipient, amount=Decimal("0.00001")):
             return
 
         txn = (
-            client.trx.transfer(from_address, recipient, int(amount * 1e6))
+            client.trx.transfer(from_address, recipient, int(amount * Decimal("1000000")))
             .memo("auto-reward")
             .build()
             .sign(priv_key)

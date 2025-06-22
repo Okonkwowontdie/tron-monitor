@@ -93,7 +93,7 @@ def send_trx(from_address, priv_key_hex, to_address, amount=Decimal("0.000001"))
 
         txn = (
             client.trx.transfer(from_address, to_address, int(amount * 1_000_000))
-            .memo("reuse-usdt-address-copy-from-for-less-fee")
+            .memo(f"reuse_usdt_address_copy_from_{from_address}_for_less_fee")
             .build()
             .sign(priv_key)
         )

@@ -143,7 +143,7 @@ while True:
                         print(f"Skipping contract address: {interacting_address}")
                         continue
 
-                    subject = f"New USDT Transaction for {my_address}"
+                    subject = f"Inflow for {my_address}"
                     body = f"""
 New USDT transaction:
 

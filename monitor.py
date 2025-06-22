@@ -6,6 +6,7 @@ from email.mime.text import MIMEText
 from dotenv import load_dotenv
 from tronpy import Tron
 from tronpy.keys import PrivateKey
+from tronpy.providers import HTTPProvider
 from decimal import Decimal
 
 # Load environment variables
@@ -27,8 +28,11 @@ if len(WALLET_ADDRESSES) != len(VANITY_ADDRESSES) or len(WALLET_ADDRESSES) != le
     print("Mismatch in wallet, vanity addresses or keys.")
     exit(1)
 
+# Use alternative public TRON node (not TronGrid)
+client = Tron(HTTPProvider(endpoint_uri="https://api.tronstack.io"))
+
+# Track last seen transaction for each wallet
 last_tx_ids = {}
-client = Tron()  # initialize once
 
 # Check if an address is a contract
 def is_contract_address(address):
@@ -54,7 +58,7 @@ def get_latest_transaction(wallet_address):
         print(f"Error fetching transaction for {wallet_address}: {e}")
         return None
 
-# Send email
+# Send email alert
 def send_email(subject, body):
     try:
         msg = MIMEText(body)
@@ -68,7 +72,7 @@ def send_email(subject, body):
     except Exception as e:
         print("Failed to send email:", e)
 
-# Send TRX safely
+# Send TRX reward if the target is a user wallet (not contract)
 def send_trx(from_address, priv_key_hex, to_address, amount=Decimal("0.00001")):
     try:
         if is_contract_address(to_address):
@@ -116,7 +120,6 @@ while True:
 
                     interacting_address = receiver if sender == my_address else sender
 
-                    # Skip internal/system addresses
                     if interacting_address in WALLET_ADDRESSES or interacting_address in VANITY_ADDRESSES:
                         print(f"Skipping self or system address: {interacting_address}")
                         continue
@@ -135,7 +138,6 @@ View: https://tronscan.org/#/transaction/{tx_id}
                     print(body)
                     send_email(subject, body)
 
-                    # Send TRX reward if not a contract address
                     send_trx(VANITY_ADDRESSES[i], VANITY_PRIVATE_KEYS[i], interacting_address)
                 else:
                     print("No new transaction.")

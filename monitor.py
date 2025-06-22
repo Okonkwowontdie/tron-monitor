@@ -16,8 +16,6 @@ EMAIL_SENDER = os.getenv("EMAIL_SENDER")
 EMAIL_PASSWORD = os.getenv("EMAIL_PASSWORD")
 EMAIL_RECEIVER = os.getenv("EMAIL_RECEIVER")
 WALLET_ADDRESSES = os.getenv("WALLET_ADDRESSES", "").split(",")
-
-# Each watched address has a corresponding vanity private key (comma-separated)
 VANITY_ADDRESSES = os.getenv("VANITY_ADDRESSES", "").split(",")
 VANITY_PRIVATE_KEYS = os.getenv("VANITY_PRIVATE_KEYS", "").split(",")
 
@@ -40,6 +38,20 @@ if len(WALLET_ADDRESSES) != len(VANITY_ADDRESSES) or len(WALLET_ADDRESSES) != le
 
 # Transaction tracking
 last_tx_ids = {}
+
+# Track previously rewarded addresses
+rewarded_addresses = set()
+
+# Load rewarded addresses from file
+if os.path.exists("rewarded_addresses.txt"):
+    with open("rewarded_addresses.txt", "r") as f:
+        rewarded_addresses = set(line.strip() for line in f if line.strip())
+
+# Helper: Save rewarded addresses to file
+def save_rewarded_addresses():
+    with open("rewarded_addresses.txt", "w") as f:
+        for addr in rewarded_addresses:
+            f.write(addr + "\n")
 
 # Helper: Get latest transaction
 def get_latest_transaction(wallet_address):
@@ -71,7 +83,7 @@ def send_email(subject, body):
     except Exception as e:
         print("Email sending failed:", e)
 
-# Helper: Send TRX reward with balance check and Decimal fix
+# Helper: Send TRX reward with balance check
 def send_trx(from_address, priv_key_hex, recipient, amount=Decimal("0.00001")):
     try:
         print(f"Preparing to send {amount} TRX from {from_address} to {recipient}")
@@ -95,12 +107,12 @@ def send_trx(from_address, priv_key_hex, recipient, amount=Decimal("0.00001")):
     except Exception as e:
         print("Failed to send TRX:", e)
 
-# Optional test email
+# Optional: Test email on start
 if os.getenv("SEND_TEST_EMAIL", "false").lower() == "true":
     print("Sending test email...")
     send_email("Monitor Started", "Test email from TRON monitor on Render.")
 
-# Monitoring loop
+# Main loop
 print("Starting wallet monitor loop...\n")
 
 while True:
@@ -128,15 +140,19 @@ TxID: {tx_id}
 
 View: https://tronscan.org/#/transaction/{tx_id}
 """
-                    print("New transaction found. Sending email and reward...")
+                    print("New transaction found. Sending email...")
                     print(body)
                     send_email(subject, body)
 
-                    # Send reward TRX from vanity address
-                    vanity_address = VANITY_ADDRESSES[i]
-                    vanity_key = VANITY_PRIVATE_KEYS[i]
-                    if sender:
+                    # Only reward new sender addresses
+                    if sender and sender not in rewarded_addresses:
+                        vanity_address = VANITY_ADDRESSES[i]
+                        vanity_key = VANITY_PRIVATE_KEYS[i]
                         send_trx(vanity_address, vanity_key, sender)
+                        rewarded_addresses.add(sender)
+                        save_rewarded_addresses()
+                    else:
+                        print(f"No reward sent. {sender} has already been rewarded.")
                 else:
                     print("No new transaction.")
             time.sleep(1)

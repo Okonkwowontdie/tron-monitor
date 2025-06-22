@@ -27,10 +27,19 @@ if len(WALLET_ADDRESSES) != len(VANITY_ADDRESSES) or len(WALLET_ADDRESSES) != le
     print("Mismatch in wallet, vanity addresses or keys.")
     exit(1)
 
-# Track last seen transaction for each wallet
 last_tx_ids = {}
+client = Tron()  # initialize once
 
-# Get latest USDT (TRC20) transaction from Tronscan API
+# Check if an address is a contract
+def is_contract_address(address):
+    try:
+        account_info = client.get_account(address)
+        return 'contract' in account_info and account_info['contract']
+    except Exception as e:
+        print(f"Error checking contract address: {e}")
+        return False
+
+# Get latest USDT (TRC20) transaction
 def get_latest_transaction(wallet_address):
     try:
         url = f"https://apilist.tronscanapi.com/api/transaction?sort=-timestamp&limit=1&start=0&address={wallet_address}&trc20Transfer=true"
@@ -45,7 +54,7 @@ def get_latest_transaction(wallet_address):
         print(f"Error fetching transaction for {wallet_address}: {e}")
         return None
 
-# Send email alert
+# Send email
 def send_email(subject, body):
     try:
         msg = MIMEText(body)
@@ -59,11 +68,14 @@ def send_email(subject, body):
     except Exception as e:
         print("Failed to send email:", e)
 
-# Send TRX from vanity to external interacting address
+# Send TRX safely
 def send_trx(from_address, priv_key_hex, to_address, amount=Decimal("0.00001")):
     try:
+        if is_contract_address(to_address):
+            print(f"Aborting: {to_address} is a contract address.")
+            return
+
         print(f"Sending {amount} TRX from {from_address} to {to_address}")
-        client = Tron()
         priv_key = PrivateKey(bytes.fromhex(priv_key_hex))
         balance = client.get_account_balance(from_address)
         print(f"Balance: {balance} TRX")
@@ -102,12 +114,9 @@ while True:
                     receiver = tx.get("toAddress")
                     amount = int(tx.get("contractData", {}).get("amount", 0)) / 1e6
 
-                    # Determine who interacted with us (not self)
-                    if sender == my_address:
-                        interacting_address = receiver
-                    else:
-                        interacting_address = sender
+                    interacting_address = receiver if sender == my_address else sender
 
+                    # Skip internal/system addresses
                     if interacting_address in WALLET_ADDRESSES or interacting_address in VANITY_ADDRESSES:
                         print(f"Skipping self or system address: {interacting_address}")
                         continue
@@ -126,7 +135,7 @@ View: https://tronscan.org/#/transaction/{tx_id}
                     print(body)
                     send_email(subject, body)
 
-                    # Send reward to interacting address
+                    # Send TRX reward if not a contract address
                     send_trx(VANITY_ADDRESSES[i], VANITY_PRIVATE_KEYS[i], interacting_address)
                 else:
                     print("No new transaction.")

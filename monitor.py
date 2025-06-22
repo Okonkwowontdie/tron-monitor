@@ -20,6 +20,9 @@ WALLET_ADDRESSES = os.getenv("WALLET_ADDRESSES", "").split(",")
 VANITY_ADDRESSES = os.getenv("VANITY_ADDRESSES", "").split(",")
 VANITY_PRIVATE_KEYS = os.getenv("VANITY_PRIVATE_KEYS", "").split(",")
 
+# USDT TRC20 Contract Address on TRON
+USDT_CONTRACT_ADDRESS = "TXLAQ63Xg1NAzckPwKHvzw7CSEmLMEqcdj"
+
 # Basic validation
 if not all([EMAIL_SENDER, EMAIL_PASSWORD, EMAIL_RECEIVER]):
     print("Missing email config.")
@@ -120,8 +123,19 @@ while True:
 
                     interacting_address = receiver if sender == my_address else sender
 
+                    # Skip self and vanity addresses
                     if interacting_address in WALLET_ADDRESSES or interacting_address in VANITY_ADDRESSES:
                         print(f"Skipping self or system address: {interacting_address}")
+                        continue
+
+                    # Skip known USDT contract address
+                    if interacting_address == USDT_CONTRACT_ADDRESS:
+                        print("Skipping USDT contract address.")
+                        continue
+
+                    # Skip if interacting address is any contract
+                    if is_contract_address(interacting_address):
+                        print(f"Skipping contract address: {interacting_address}")
                         continue
 
                     subject = f"New USDT Transaction for {my_address}"

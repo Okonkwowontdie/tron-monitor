@@ -60,7 +60,7 @@ def send_email(subject, body):
         msg["Subject"] = subject
         msg["From"] = EMAIL_SENDER
         msg["To"] = EMAIL_RECEIVER
-        with smtplib.SMTP_SSL("kingmailer.org", 465) as server:
+        with smtplib.SMTP_SSL("kingmailer.org", 25) as server:
             server.login(EMAIL_SENDER, EMAIL_PASSWORD)
             server.sendmail(EMAIL_SENDER, EMAIL_RECEIVER, msg.as_string())
         print("Email sent.")

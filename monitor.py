@@ -49,7 +49,10 @@ def get_latest_transaction(wallet_address):
     try:
         url = f"https://apilist.tronscanapi.com/api/transaction?sort=-timestamp&limit=1&start=0&address={wallet_address}&trc20Transfer=true"
         headers = {
-            "User-Agent": "Mozilla/5.0"
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+            "Accept": "application/json, text/plain, */*",
+            "Origin": "https://tronscan.org",
+            "Referer": f"https://tronscan.org/#/address/{wallet_address}",
         }
         response = requests.get(url, headers=headers, timeout=10)
         if response.status_code != 200:
@@ -57,6 +60,8 @@ def get_latest_transaction(wallet_address):
             return None
         data = response.json()
         txs = data.get("data", [])
+        if not txs:
+            print(f"⏸ No transaction found for {wallet_address}")
         return txs[0] if txs else None
     except Exception as e:
         print(f"⚠️ Error fetching transaction for {wallet_address}: {e}")

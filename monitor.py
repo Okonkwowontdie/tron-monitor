@@ -48,7 +48,10 @@ def is_contract_address(address):
 def get_latest_transaction(wallet_address):
     try:
         url = f"https://apilist.tronscanapi.com/api/transaction?sort=-timestamp&limit=1&start=0&address={wallet_address}&trc20Transfer=true"
-        response = requests.get(url, timeout=10)
+        headers = {
+            "User-Agent": "Mozilla/5.0"
+        }
+        response = requests.get(url, headers=headers, timeout=10)
         if response.status_code != 200:
             print(f"❌ Tronscan API failed for {wallet_address}. Status: {response.status_code}")
             return None
@@ -56,8 +59,9 @@ def get_latest_transaction(wallet_address):
         txs = data.get("data", [])
         return txs[0] if txs else None
     except Exception as e:
-        print(f"❌ Error fetching transaction for {wallet_address}: {e}")
+        print(f"⚠️ Error fetching transaction for {wallet_address}: {e}")
         return None
+
 
 def send_email(subject, body):
     try:

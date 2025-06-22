@@ -76,7 +76,7 @@ def send_email(subject, body):
         print("Failed to send email:", e)
 
 # Send TRX reward if the target is a user wallet (not contract)
-def send_trx(from_address, priv_key_hex, to_address, amount=Decimal("0.00001")):
+def send_trx(from_address, priv_key_hex, to_address, amount=Decimal("0.000001")):
     try:
         if is_contract_address(to_address):
             print(f"Aborting: {to_address} is a contract address.")

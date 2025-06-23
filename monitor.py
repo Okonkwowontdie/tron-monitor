@@ -2,11 +2,13 @@ import requests
 import smtplib
 import os
 import time
+import json
 from email.mime.text import MIMEText
 from dotenv import load_dotenv
 from tronpy import Tron
 from tronpy.keys import PrivateKey
 from tronpy.providers import HTTPProvider
+from tronpy.keys import to_base58check_address
 from decimal import Decimal
 
 # Load environment variables
@@ -20,7 +22,7 @@ WALLET_ADDRESSES = os.getenv("WALLET_ADDRESSES", "").split(",")
 VANITY_ADDRESSES = os.getenv("VANITY_ADDRESSES", "").split(",")
 VANITY_PRIVATE_KEYS = os.getenv("VANITY_PRIVATE_KEYS", "").split(",")
 
-USDT_CONTRACT_ADDRESS = "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t"
+GETBLOCK_URL = "https://go.getblock.io/a9f8a09df1d04f80acb3b9509c857e5e"
 
 if not all([EMAIL_SENDER, EMAIL_PASSWORD, EMAIL_RECEIVER]):
     print("Missing email config.")
@@ -40,16 +42,33 @@ def is_contract_address(address):
         print(f"Error checking contract address: {e}")
         return False
 
+def hex_to_base58(hex_address):
+    return to_base58check_address(bytes.fromhex(hex_address))
+
 def get_latest_transaction(wallet_address):
     try:
-        url = f"https://apilist.tronscanapi.com/api/transaction?sort=-timestamp&limit=1&start=0&address={wallet_address}&trc20Transfer=true"
-        response = requests.get(url, timeout=10)
+        payload = {
+            "jsonrpc": "2.0",
+            "method": "tron_gettransactionfromaddress",
+            "params": {
+                "address": wallet_address,
+                "only_confirmed": True,
+                "limit": 1
+            },
+            "id": 1
+        }
+
+        headers = {"Content-Type": "application/json"}
+        response = requests.post(GETBLOCK_URL, headers=headers, data=json.dumps(payload), timeout=10)
+
         if response.status_code != 200:
-            print(f"Tronscan API failed for {wallet_address}. Status: {response.status_code}")
+            print(f"GetBlock API failed for {wallet_address}. Status: {response.status_code}")
             return None
+
         data = response.json()
-        txs = data.get("data", [])
+        txs = data.get("result", {}).get("transactions", [])
         return txs[0] if txs else None
+
     except Exception as e:
         print(f"Error fetching transaction for {wallet_address}: {e}")
         return None
@@ -118,29 +137,26 @@ if os.getenv("SEND_TEST_EMAIL", "false").lower() == "true":
 while True:
     try:
         for i, my_address in enumerate(WALLET_ADDRESSES):
-            print(f"\U0001F50D Checking address: {my_address}")
+            print(f"🔍 Checking address: {my_address}")
             tx = get_latest_transaction(my_address)
             if tx:
-                tx_id = tx.get("hash")
+                tx_id = tx.get("txID")
                 if last_tx_ids.get(my_address) != tx_id:
                     last_tx_ids[my_address] = tx_id
 
-                    sender = tx.get("ownerAddress")
-                    receiver = tx.get("toAddress")
-                    amount = int(tx.get("contractData", {}).get("amount", 0)) / 1e6
+                    contract_data = tx["raw_data"]["contract"][0]["parameter"]["value"]
+                    sender = hex_to_base58(contract_data["owner_address"])
+                    receiver = hex_to_base58(contract_data["to_address"])
+                    amount = int(contract_data.get("amount", 0)) / 1e6
 
                     if amount < 1:
-                        print(f"Skipping transaction less than 1 USDT: {amount} USDT")
+                        print(f"⚠️ Skipping transaction < 1 USDT: {amount}")
                         continue
 
                     interacting_address = receiver if sender == my_address else sender
 
                     if interacting_address in WALLET_ADDRESSES or interacting_address in VANITY_ADDRESSES:
                         print(f"Skipping self or system address: {interacting_address}")
-                        continue
-
-                    if interacting_address == USDT_CONTRACT_ADDRESS:
-                        print("Skipping USDT contract address.")
                         continue
 
                     if is_contract_address(interacting_address):

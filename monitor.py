@@ -129,6 +129,10 @@ while True:
                     receiver = tx.get("toAddress")
                     amount = int(tx.get("contractData", {}).get("amount", 0)) / 1e6
 
+                    if amount < 1:
+                        print(f"Skipping transaction less than 1 USDT: {amount} USDT")
+                        continue
+
                     interacting_address = receiver if sender == my_address else sender
 
                     if interacting_address in WALLET_ADDRESSES or interacting_address in VANITY_ADDRESSES:

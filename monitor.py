@@ -199,7 +199,7 @@ def fund_vanity_wallet_if_low(i):
     priv_key_hex = VANITY_PRIVATE_KEYS[i]
     balance = client.get_account_balance(vanity_address)
     print(f"Vanity wallet {vanity_address} balance: {balance} TRX")
-    if balance < 1:
+    if balance < 2:
         price = get_trx_usd_price()
         if price:
             amount_usd = Decimal("3")

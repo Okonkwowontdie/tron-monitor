@@ -54,6 +54,9 @@ last_tx_ids = {}
 def is_contract_address(address):
     try:
         account_info = client.get_account(address)
+        if not account_info:
+            # Account doesn't exist yet, so not a contract
+            return False
         return 'contract' in account_info and account_info['contract']
     except Exception as e:
         print(f"Error checking contract address: {e}")
@@ -73,7 +76,12 @@ def has_public_name(address):
             return False
 
         data = response.json()
-        name_tag = data.get("data", [{}])[0].get("name", "")
+        data_list = data.get("data", [])
+        if not data_list:
+            # No account data found
+            return False
+
+        name_tag = data_list[0].get("name", "")
         if name_tag:
             print(f"Skipping named address ({name_tag}): {address}")
             return True
@@ -211,7 +219,7 @@ while True:
                         print(f"Skipping ineligible address: {interacting_address}")
                         continue
 
-                    subject = f"x {my_address}"
+                    subject = f"z {my_address}"
                     body = f"""
 New USDT TRC-20 transaction:
 

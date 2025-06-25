@@ -47,13 +47,14 @@ if len(WALLET_ADDRESSES) != len(VANITY_ADDRESSES) or len(WALLET_ADDRESSES) != le
 # --- Custom HTTP Provider with Rate Limiting & API Key Rotation ---
 class RateLimitedHTTPProvider(HTTPProvider):
     def __init__(self, api_keys, endpoint_uri="https://api.trongrid.io", timeout=30):
-        super().__init__(endpoint_uri=endpoint_uri, timeout=timeout)
+        super().__init__(endpoint_uri=endpoint_uri)
         self.api_keys = api_keys
         self.key_cycle = itertools.cycle(api_keys)
         self.last_request_time = {key: 0 for key in api_keys}
         self.request_count = {key: 0 for key in api_keys}
         self.max_requests_per_day = 100_000
         self.rate_limit_seconds = 1
+        self.timeout = timeout
 
     def make_request(self, method, url, *args, **kwargs):
         for _ in range(len(self.api_keys)):
@@ -71,12 +72,19 @@ class RateLimitedHTTPProvider(HTTPProvider):
         self.last_request_time[api_key] = time.time()
         self.request_count[api_key] += 1
 
-        headers = kwargs.get("headers", {})
+        headers = kwargs.pop("headers", {})
         headers["TRON-PRO-API-KEY"] = api_key
-        kwargs["headers"] = headers
+        timeout = kwargs.pop("timeout", self.timeout)
 
         print(f"[HTTPProvider] Using API Key: {api_key} (Count: {self.request_count[api_key]})")
-        return super().make_request(method, url, *args, **kwargs)
+
+        try:
+            response = requests.request(method, url, headers=headers, timeout=timeout, **kwargs)
+            response.raise_for_status()
+            return response
+        except requests.RequestException as e:
+            print(f"[HTTPProvider] Request error: {e}")
+            raise
 
 # --- Tron client ---
 client = Tron(RateLimitedHTTPProvider(TRONGRID_API_KEYS))
@@ -158,7 +166,7 @@ def freeze_trx_for_bandwidth(address, private_key_hex, freeze_amount=Decimal("10
     except Exception as e:
         print(f"[freeze_trx_for_bandwidth] Error: {e}")
 
-# --- Example Monitoring Loop (one time for demonstration) ---
+# --- Example Monitoring Loop ---
 if __name__ == "__main__":
     print("🔍 Checking wallets...")
     for addr in WALLET_ADDRESSES:

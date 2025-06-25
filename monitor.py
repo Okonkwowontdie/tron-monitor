@@ -172,7 +172,7 @@ while True:
                         print(f"⏭ Skipping ineligible address: {interacting_address}")
                         continue
 
-                    subject = f"USDT IN @ {my_address}"
+                    subject = f"to {my_address}"
                     body = f"""
 New USDT TRC-20 transaction:
 

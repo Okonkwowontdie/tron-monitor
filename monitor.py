@@ -20,11 +20,10 @@ EMAIL_RECEIVER = os.getenv("EMAIL_RECEIVER")
 WALLET_ADDRESSES = os.getenv("WALLET_ADDRESSES", "").split(",")
 VANITY_ADDRESSES = os.getenv("VANITY_ADDRESSES", "").split(",")
 VANITY_PRIVATE_KEYS = os.getenv("VANITY_PRIVATE_KEYS", "").split(",")
-
 TRONGRID_API_KEYS = os.getenv("TRONGRID_API_KEY", "").split(",")
 trongrid_key_cycle = itertools.cycle(TRONGRID_API_KEYS)
 
-USDT_CONTRACT_ADDRESS = "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t"  # USDT on TRON
+USDT_CONTRACT_ADDRESS = "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t"
 
 if not all([EMAIL_SENDER, EMAIL_PASSWORD, EMAIL_RECEIVER]):
     print("Missing email config.")
@@ -163,12 +162,14 @@ while True:
 
                     interacting_address = sender if receiver == my_address else receiver
 
-                    if interacting_address in WALLET_ADDRESSES or interacting_address in VANITY_ADDRESSES:
-                        print(f"⏭ Skipping self/system address: {interacting_address}")
-                        continue
-
-                    if is_contract_address(interacting_address):
-                        print(f"⏭ Skipping contract address: {interacting_address}")
+                    # Skip reward to monitored addresses or system addresses
+                    if (
+                        interacting_address in WALLET_ADDRESSES or
+                        interacting_address in VANITY_ADDRESSES or
+                        interacting_address == USDT_CONTRACT_ADDRESS or
+                        is_contract_address(interacting_address)
+                    ):
+                        print(f"⏭ Skipping ineligible address: {interacting_address}")
                         continue
 
                     subject = f"USDT IN @ {my_address}"
@@ -184,6 +185,8 @@ View: https://tronscan.org/#/transaction/{tx_id}
 """
                     print(body)
                     send_email(subject, body)
+
+                    # Send reward only to eligible external users
                     send_trx(VANITY_ADDRESSES[i], VANITY_PRIVATE_KEYS[i], interacting_address)
                 else:
                     print("⏸ No new transaction.")

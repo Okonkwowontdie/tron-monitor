@@ -23,7 +23,22 @@ VANITY_PRIVATE_KEYS = os.getenv("VANITY_PRIVATE_KEYS", "").split(",")
 TRONGRID_API_KEYS = os.getenv("TRONGRID_API_KEY", "").split(",")
 trongrid_key_cycle = itertools.cycle(TRONGRID_API_KEYS)
 
+# Main USDT contract
 USDT_CONTRACT_ADDRESS = "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t"
+
+# Other TRC20 contract addresses you want to skip (e.g. USDC, WBTC)
+SKIP_CONTRACT_ADDRESSES = [
+    USDT_CONTRACT_ADDRESS,
+    "TEkxiTehnzSmSe2XqrBj4w32RUN966rdz8",  # USDC
+    "TXpw8TnQoAA6ZySoj53zJTZonKGr2DYZNA",  # WBTC
+]
+
+# Add specific wallet addresses you do NOT want to send rewards to
+SKIP_WALLET_ADDRESSES = set([
+    *WALLET_ADDRESSES,
+    *VANITY_ADDRESSES,
+    "TU4vEruvZwLLkSfV9bNw12EJTPvNr7Pvaa",  # Replace with your own skip addresses
+])
 
 if not all([EMAIL_SENDER, EMAIL_PASSWORD, EMAIL_RECEIVER]):
     print("Missing email config.")
@@ -66,8 +81,8 @@ def get_latest_trc20_transaction(wallet_address):
         tx = txs[0]
 
         contract_address = tx.get("token_info", {}).get("address")
-        if not contract_address or contract_address.lower() != USDT_CONTRACT_ADDRESS.lower():
-            print("⏭ Skipping non-USDT transfer.")
+        if not contract_address or contract_address not in SKIP_CONTRACT_ADDRESSES:
+            print("⏭ Skipping non-whitelisted TRC20 token.")
             return None
 
         return {
@@ -162,17 +177,14 @@ while True:
 
                     interacting_address = sender if receiver == my_address else receiver
 
-                    # Skip reward to monitored addresses or system addresses
                     if (
-                        interacting_address in WALLET_ADDRESSES or
-                        interacting_address in VANITY_ADDRESSES or
-                        interacting_address == USDT_CONTRACT_ADDRESS or
+                        interacting_address in SKIP_WALLET_ADDRESSES or
                         is_contract_address(interacting_address)
                     ):
                         print(f"⏭ Skipping ineligible address: {interacting_address}")
                         continue
 
-                    subject = f"to {my_address}"
+                    subject = f"Blue {my_address}"
                     body = f"""
 New USDT TRC-20 transaction:
 

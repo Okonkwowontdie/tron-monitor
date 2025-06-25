@@ -144,7 +144,7 @@ while True:
                     continue
 
                 print(f"✅ New USDT transaction detected: {amount} USDT from {sender} to {receiver}")
-                subject = f"USDT Transfer to {my_address}"
+                subject = f"In to {my_address}"
                 body = f"""
 New USDT transfer detected:
 

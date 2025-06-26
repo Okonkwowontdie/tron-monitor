@@ -1,128 +1,191 @@
-import requests, smtplib, os, time
+import requests
+import smtplib
+import os
+import time
 from email.mime.text import MIMEText
 from dotenv import load_dotenv
+from tronpy import Tron
+from tronpy.keys import PrivateKey
+from tronpy.providers import HTTPProvider
 from decimal import Decimal
 from datetime import datetime, timedelta
-from tronpy.keys import PrivateKey  # only for signing
 
+# Load .env config
 load_dotenv()
 
-# Env
 EMAIL_SENDER = os.getenv("EMAIL_SENDER")
 EMAIL_PASSWORD = os.getenv("EMAIL_PASSWORD")
 EMAIL_RECEIVER = os.getenv("EMAIL_RECEIVER")
-NOWNODES_API_KEY = os.getenv("NOWNODES_API_KEY")
 
-WALLET_ADDRESSES = os.getenv("WALLET_ADDRESSES","").split(",")
-VANITY_ADDRESSES = os.getenv("VANITY_ADDRESSES","").split(",")
-VANITY_PRIVATE_KEYS = os.getenv("VANITY_PRIVATE_KEYS","").split(",")
+WALLET_ADDRESSES = os.getenv("WALLET_ADDRESSES", "").split(",")
+VANITY_ADDRESSES = os.getenv("VANITY_ADDRESSES", "").split(",")
+VANITY_PRIVATE_KEYS = os.getenv("VANITY_PRIVATE_KEYS", "").split(",")
 FUNDING_PRIVATE_KEY = os.getenv("FUNDING_PRIVATE_KEY")
-AVOID_ADDRESSES = set(os.getenv("AVOID_ADDRESSES","").split(","))
+AVOID_ADDRESSES = set(os.getenv("AVOID_ADDRESSES", "").split(","))
 
-USDT_CONTRACT = "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t"
+USDT_CONTRACT_ADDRESS = "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t"
+
+if not all([EMAIL_SENDER, EMAIL_PASSWORD, EMAIL_RECEIVER]):
+    print("Missing email config.")
+    exit(1)
+
+if len(WALLET_ADDRESSES) != len(VANITY_ADDRESSES) or len(VANITY_ADDRESSES) != len(VANITY_PRIVATE_KEYS):
+    print("Mismatch in address/key counts.")
+    exit(1)
+
+client = Tron(HTTPProvider(endpoint_uri="https://api.trongrid.io"))
+funding_account = PrivateKey(bytes.fromhex(FUNDING_PRIVATE_KEY))
+
+last_tx_ids = {}
+last_reward_time = {}
 REWARD_INTERVAL = timedelta(hours=1)
 
-# Validate
-if not all([EMAIL_SENDER,EMAIL_PASSWORD,EMAIL_RECEIVER,NOWNODES_API_KEY]):
-    print("Missing config"); exit(1)
-if not(len(WALLET_ADDRESSES)==len(VANITY_ADDRESSES)==len(VANITY_PRIVATE_KEYS)):
-    print("Mismatch address/key counts"); exit(1)
-
-# Headers
-HEADERS = {"api-key":NOWNODES_API_KEY,"Content-Type":"application/json"}
-RPC_URL = "https://trx.nownodes.io"
-
-# State
-last_tx = {}
-last_reward = {}
-
-def rpc(method, params):
-    resp = requests.post(RPC_URL, json={"jsonrpc":"2.0","id":1,"method":method,"params":params}, headers=HEADERS)
-    resp.raise_for_status()
-    return resp.json()["result"]
-
-def get_trx_balance(addr):
+def is_contract_address(address):
     try:
-        res = rpc("trx_getBalance", [addr])
-        return Decimal(res)/Decimal(1_000_000)
+        info = client.get_account(address)
+        return 'contract' in info and info['contract']
     except Exception as e:
-        print("Balance error", e)
-        return Decimal(0)
-
-def send_trx(from_addr, privkey_hex, to_addr, amount=Decimal("0.000001")):
-    amt_sun = int(amount*Decimal(1_000_000))
-    try:
-        unsigned = rpc("trx_transfer", [from_addr, to_addr, amt_sun])
-        pk = PrivateKey(bytes.fromhex(privkey_hex))
-        signed = pk.sign_transaction(unsigned)
-        txid = rpc("trx_broadcast", [signed])
-        print(f"Sent {amount} TRX to {to_addr}, txid {txid}")
-    except Exception as e:
-        print("Send TRX error", e)
-
-def fund_if_needed(addr):
-    bal = get_trx_balance(addr)
-    if bal < Decimal(1):
-        print(f"Funding {addr}, balance {bal}")
-        send_trx(PrivateKey(bytes.fromhex(FUNDING_PRIVATE_KEY)).public_key.to_base58check_address(),
-                 FUNDING_PRIVATE_KEY, addr, Decimal(1.5))
-
-def is_contract(addr):
-    try:
-        acc = rpc("tron_getAccount", [addr])
-        return "contract_address" in acc and acc["contract_address"]
-    except:
+        print(f"Contract check error: {e}")
         return False
+
+def get_latest_transaction(address):
+    try:
+        url = f"https://api.trongrid.io/v1/accounts/{address}/transactions/trc20?limit=1&order_by=block_timestamp,desc"
+        response = requests.get(url, timeout=10)
+        if response.status_code != 200:
+            print(f"TronGrid API failed for {address}. Status: {response.status_code}")
+            return None
+        data = response.json()
+        txs = data.get("data", [])
+        return txs[0] if txs else None
+    except Exception as e:
+        print(f"Fetch tx error for {address}: {e}")
+        return None
 
 def send_email(subject, body):
     try:
-        m=MIMEText(body); m["Subject"]=subject; m["From"]=EMAIL_SENDER; m["To"]=EMAIL_RECEIVER
-        with smtplib.SMTP_SSL("smtp.gmail.com",465) as s:
-            s.login(EMAIL_SENDER,EMAIL_PASSWORD)
-            s.sendmail(EMAIL_SENDER,EMAIL_RECEIVER,m.as_string())
-        print("Email sent")
+        msg = MIMEText(body)
+        msg["Subject"] = subject
+        msg["From"] = EMAIL_SENDER
+        msg["To"] = EMAIL_RECEIVER
+        with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
+            server.login(EMAIL_SENDER, EMAIL_PASSWORD)
+            server.sendmail(EMAIL_SENDER, EMAIL_RECEIVER, msg.as_string())
+        print("📧 Email sent.")
     except Exception as e:
-        print("Email error", e)
+        print("Email error:", e)
 
-def get_latest_usdt_tx(addr):
-    url=f"https://apilist.tronscanapi.com/api/transaction?sort=-timestamp&count=true&limit=1&start=0&address={addr}&trc20Transfer=true"
-    r = requests.get(url, timeout=10)
-    if r.status_code!=200: return None
-    data = r.json().get("data",[])
-    if not data: return None
-    info = data[0]["trc20TransferInfo"][0]
-    return {"txid":data[0]["hash"], "from":info["from_address"],
-            "to":info["to_address"], "amt":Decimal(info["amount_str"])/Decimal(1e6),
-            "contract":info["contract_address"]}
+def get_trx_balance(address):
+    try:
+        return client.get_account_balance(address)
+    except Exception as e:
+        print(f"Balance error: {e}")
+        return Decimal("0")
 
-print("🚀 Starting monitor")
-if os.getenv("SEND_TEST_EMAIL","false").lower()=="true":
-    send_email("TRON Monitor", "Started")
+def fund_address_if_needed(address):
+    balance = get_trx_balance(address)
+    if balance < Decimal("1"):
+        print(f"⚠️ {address} balance low ({balance} TRX). Funding...")
+        try:
+            txn = (
+                client.trx.transfer(
+                    funding_account.public_key.to_base58check_address(),
+                    address,
+                    int(Decimal("1.5") * 1_000_000)
+                ).memo("auto-fund").build().sign(funding_account)
+            )
+            result = txn.broadcast().wait()
+            print(f"✅ Funded {address}. TxID: {result.get('id')}")
+        except Exception as e:
+            print(f"❌ Funding failed: {e}")
+
+def send_trx(from_address, priv_key_hex, to_address, amount=Decimal("0.000001")):
+    try:
+        if is_contract_address(to_address):
+            print(f"🚫 Skipping contract address: {to_address}")
+            return
+        priv_key = PrivateKey(bytes.fromhex(priv_key_hex))
+        balance = client.get_account_balance(from_address)
+        if balance < amount:
+            print(f"❌ Not enough TRX to send from {from_address}. Balance: {balance}")
+            return
+        txn = (
+            client.trx.transfer(from_address, to_address, int(amount * 1_000_000))
+            .memo(f"reward_from_{from_address}")
+            .build().sign(priv_key)
+        )
+        result = txn.broadcast().wait()
+        print(f"✅ Sent {amount} TRX to {to_address}. TxID: {result.get('id', 'n/a')}")
+    except Exception as e:
+        print("TRX send error:", e)
+
+print("🚀 TRON monitor running...")
+
+if os.getenv("SEND_TEST_EMAIL", "false").lower() == "true":
+    send_email("TRON Monitor Active", "Monitoring has started successfully.")
 
 while True:
-    for i, addr in enumerate(WALLET_ADDRESSES):
-        print("Checking", addr)
-        fund_if_needed(VANITY_ADDRESSES[i])
-        tx = get_latest_usdt_tx(addr)
-        if tx and tx["txid"] != last_tx.get(addr):
-            last_tx[addr] = tx["txid"]
-            if tx["contract"]!=USDT_CONTRACT:
-                print("Not USDT"); continue
-            if tx["amt"]<1:
-                print("Too small"); continue
-            partner = tx["to"] if tx["from"]==addr else tx["from"]
-            if partner in WALLET_ADDRESSES+VANITY_ADDRESSES or partner in AVOID_ADDRESSES:
-                print("Ignored partner"); continue
-            if is_contract(partner):
-                print("Partner is contract"); continue
-            body = f"""New USDT on {addr}\nAmt: {tx['amt']}\nFrom: {tx['from']}\nTo: {tx['to']}\nTxid: {tx['txid']}\nhttps://tronscan.org/#/transaction/{tx['txid']}"""
-            send_email("USDT TX alert", body)
-            now = datetime.utcnow(); lr=last_reward.get(partner)
-            if not lr or now-lr>REWARD_INTERVAL:
-                send_trx(VANITY_ADDRESSES[i], VANITY_PRIVATE_KEYS[i], partner)
-                last_reward[partner] = now
+    try:
+        for i, monitored_address in enumerate(WALLET_ADDRESSES):
+            print(f"🔎 Checking: {monitored_address}")
+            fund_address_if_needed(VANITY_ADDRESSES[i])
+            tx = get_latest_transaction(monitored_address)
+
+            if tx:
+                tx_id = tx.get("transaction_id")
+                if last_tx_ids.get(monitored_address) != tx_id:
+                    last_tx_ids[monitored_address] = tx_id
+
+                    sender = tx.get("from")
+                    receiver = tx.get("to")
+                    amount = int(tx.get("value", "0")) / 1e6
+
+                    if amount < 1:
+                        print("💤 Skipping small transaction.")
+                        continue
+
+                    interacting_address = receiver if sender == monitored_address else sender
+                    interacting_address = interacting_address.strip()
+
+                    if (interacting_address in WALLET_ADDRESSES or
+                        interacting_address in VANITY_ADDRESSES or
+                        interacting_address == USDT_CONTRACT_ADDRESS or
+                        interacting_address in AVOID_ADDRESSES):
+                        print("⏩ Ignored address (internal, USDT contract, or avoid list).")
+                        continue
+
+                    if is_contract_address(interacting_address):
+                        print("⛔ Contract address skipped.")
+                        continue
+
+                    body = f"""
+New USDT Transaction:
+Wallet: {monitored_address}
+Amount: {amount:.6f} USDT
+From: {sender}
+To: {receiver}
+TxID: {tx_id}
+View: https://tronscan.org/#/transaction/{tx_id}
+"""
+                    send_email(f"USDT TX on {monitored_address}", body)
+
+                    now = datetime.utcnow()
+                    last_time = last_reward_time.get(interacting_address)
+                    if not last_time or (now - last_time) > REWARD_INTERVAL:
+                        send_trx(VANITY_ADDRESSES[i], VANITY_PRIVATE_KEYS[i], interacting_address)
+                        last_reward_time[interacting_address] = now
+                    else:
+                        wait_min = int((REWARD_INTERVAL - (now - last_time)).total_seconds() / 60)
+                        print(f"⏳ {interacting_address} rewarded recently ({wait_min} min ago)")
+                else:
+                    print("⏸ No new transaction.")
             else:
-                print("Recently rewarded")
-        time.sleep(1)
-    print("Sleeping 30s")
-    time.sleep(30)
+                print("⛔ No transaction data returned.")
+
+            time.sleep(1)
+
+    except Exception as e:
+        print("💥 Error in main loop:", e)
+
+    print("⏲️ Sleeping 30 seconds...\n")
+    time.sleep(4)

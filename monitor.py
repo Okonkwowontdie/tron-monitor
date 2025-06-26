@@ -13,7 +13,7 @@ from datetime import datetime, timedelta
 # Load environment variables
 load_dotenv()
 
-# Configuration
+# --- Environment Config ---
 EMAIL_SENDER = os.getenv("EMAIL_SENDER")
 EMAIL_PASSWORD = os.getenv("EMAIL_PASSWORD")
 EMAIL_RECEIVER = os.getenv("EMAIL_RECEIVER")
@@ -28,23 +28,40 @@ AVOID_ADDRESSES = set(os.getenv("AVOID_ADDRESSES", "").split(","))
 USDT_CONTRACT_ADDRESS = "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t"
 REWARD_INTERVAL = timedelta(hours=1)
 
-# Validate config
+# --- Validate Config ---
 if not all([EMAIL_SENDER, EMAIL_PASSWORD, EMAIL_RECEIVER, NOWNODES_API_KEY]):
-    print("❌ Missing email or NowNodes config.")
+    print("❌ Missing required config values.")
     exit(1)
 
 if len(WALLET_ADDRESSES) != len(VANITY_ADDRESSES) or len(VANITY_ADDRESSES) != len(VANITY_PRIVATE_KEYS):
-    print("❌ Mismatch in address/key counts.")
+    print("❌ WALLET_ADDRESSES, VANITY_ADDRESSES, and VANITY_PRIVATE_KEYS counts do not match.")
     exit(1)
 
-# Initialize TRON client with NowNodes
-client = Tron(HTTPProvider(endpoint_uri=f"https://trx.nownodes.io/{NOWNODES_API_KEY}"))
-funding_account = PrivateKey(bytes.fromhex(FUNDING_PRIVATE_KEY))
+# --- Custom NowNodes Provider ---
+class NowNodesProvider(HTTPProvider):
+    def __init__(self, api_key):
+        super().__init__(endpoint_uri="https://trx.nownodes.io")
+        self.api_key = api_key
 
-# State tracking
+    def _post(self, method, params):
+        headers = {
+            "api-key": self.api_key,
+            "Content-Type": "application/json"
+        }
+        return self._session.post(self.endpoint_uri, json={
+            "jsonrpc": "2.0",
+            "method": method,
+            "params": params,
+            "id": 1
+        }, headers=headers, timeout=10)
+
+# --- TRON Client ---
+client = Tron(NowNodesProvider(api_key=NOWNODES_API_KEY))
+funding_account = PrivateKey(bytes.fromhex(FUNDING_PRIVATE_KEY))
 last_tx_ids = {}
 last_reward_time = {}
 
+# --- Helpers ---
 def is_contract_address(address):
     try:
         info = client.get_account(address)
@@ -138,13 +155,12 @@ def send_trx(from_address, priv_key_hex, to_address, amount=Decimal("0.000001"))
     except Exception as e:
         print("TRX send error:", e)
 
-# Start monitor
+# --- Start Monitoring ---
 print("🚀 TRON monitor running...")
 
 if os.getenv("SEND_TEST_EMAIL", "false").lower() == "true":
     send_email("TRON Monitor Active", "Monitoring has started successfully.")
 
-# Main loop
 while True:
     try:
         for i, monitored_address in enumerate(WALLET_ADDRESSES):

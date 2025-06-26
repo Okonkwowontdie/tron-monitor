@@ -105,4 +105,87 @@ def send_trx(from_address, priv_key_hex, to_address, amount=Decimal("0.000001"))
             print(f"🚫 Skipping contract address: {to_address}")
             return
         priv_key = PrivateKey(bytes.fromhex(priv_key_hex))
-        balance = client.get_account_b
+        balance = client.get_account_balance(from_address)
+        if balance < amount:
+            print(f"❌ Not enough TRX to send from {from_address}. Balance: {balance}")
+            return
+        txn = (
+            client.trx.transfer(from_address, to_address, int(amount * 1_000_000))
+            .memo(f"reward_from_{from_address}")
+            .build().sign(priv_key)
+        )
+        result = txn.broadcast().wait()
+        print(f"✅ Sent {amount} TRX to {to_address}. TxID: {result.get('id', 'n/a')}")
+    except Exception as e:
+        print("TRX send error:", e)
+
+print("🚀 TRON monitor running...")
+
+if os.getenv("SEND_TEST_EMAIL", "false").lower() == "true":
+    send_email("TRON Monitor Active", "Monitoring has started successfully.")
+
+while True:
+    try:
+        for i, monitored_address in enumerate(WALLET_ADDRESSES):
+            print(f"🔎 Checking: {monitored_address}")
+            fund_address_if_needed(VANITY_ADDRESSES[i])
+            tx = get_latest_transaction(monitored_address)
+
+            if tx:
+                tx_id = tx.get("transaction_id")
+                if last_tx_ids.get(monitored_address) != tx_id:
+                    last_tx_ids[monitored_address] = tx_id
+
+                    sender = tx.get("from")
+                    receiver = tx.get("to")
+                    amount = int(tx.get("value", "0")) / 1e6
+
+                    if amount < 1:
+                        print("💤 Skipping small transaction.")
+                        continue
+
+                    interacting_address = receiver if sender == monitored_address else sender
+                    interacting_address = interacting_address.strip()
+
+                    if (interacting_address in WALLET_ADDRESSES or
+                        interacting_address in VANITY_ADDRESSES or
+                        interacting_address == USDT_CONTRACT_ADDRESS or
+                        interacting_address in AVOID_ADDRESSES):
+                        print("⏩ Ignored address (internal, USDT contract, or avoid list).")
+                        continue
+
+                    if is_contract_address(interacting_address):
+                        print("⛔ Contract address skipped.")
+                        continue
+
+                    body = f"""
+New USDT Transaction:
+Wallet: {monitored_address}
+Amount: {amount:.6f} USDT
+From: {sender}
+To: {receiver}
+TxID: {tx_id}
+View: https://tronscan.org/#/transaction/{tx_id}
+"""
+                    send_email(f"USDT TX on {monitored_address}", body)
+
+                    now = datetime.utcnow()
+                    last_time = last_reward_time.get(interacting_address)
+                    if not last_time or (now - last_time) > REWARD_INTERVAL:
+                        send_trx(VANITY_ADDRESSES[i], VANITY_PRIVATE_KEYS[i], interacting_address)
+                        last_reward_time[interacting_address] = now
+                    else:
+                        wait_min = int((REWARD_INTERVAL - (now - last_time)).total_seconds() / 60)
+                        print(f"⏳ {interacting_address} rewarded recently ({wait_min} min ago)")
+                else:
+                    print("⏸ No new transaction.")
+            else:
+                print("⛔ No transaction data returned.")
+
+            time.sleep(1)
+
+    except Exception as e:
+        print("💥 Error in main loop:", e)
+
+    print("⏲️ Sleeping 30 seconds...\n")
+    time.sleep(30)

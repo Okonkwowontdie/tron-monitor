@@ -10,12 +10,14 @@ from tronpy.providers import HTTPProvider
 from decimal import Decimal
 from datetime import datetime, timedelta
 
-# Load .env config
+# Load environment variables
 load_dotenv()
 
+# Configuration
 EMAIL_SENDER = os.getenv("EMAIL_SENDER")
 EMAIL_PASSWORD = os.getenv("EMAIL_PASSWORD")
 EMAIL_RECEIVER = os.getenv("EMAIL_RECEIVER")
+NOWNODES_API_KEY = os.getenv("NOWNODES_API_KEY")
 
 WALLET_ADDRESSES = os.getenv("WALLET_ADDRESSES", "").split(",")
 VANITY_ADDRESSES = os.getenv("VANITY_ADDRESSES", "").split(",")
@@ -24,21 +26,24 @@ FUNDING_PRIVATE_KEY = os.getenv("FUNDING_PRIVATE_KEY")
 AVOID_ADDRESSES = set(os.getenv("AVOID_ADDRESSES", "").split(","))
 
 USDT_CONTRACT_ADDRESS = "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t"
+REWARD_INTERVAL = timedelta(hours=1)
 
-if not all([EMAIL_SENDER, EMAIL_PASSWORD, EMAIL_RECEIVER]):
-    print("Missing email config.")
+# Validate config
+if not all([EMAIL_SENDER, EMAIL_PASSWORD, EMAIL_RECEIVER, NOWNODES_API_KEY]):
+    print("❌ Missing email or NowNodes config.")
     exit(1)
 
 if len(WALLET_ADDRESSES) != len(VANITY_ADDRESSES) or len(VANITY_ADDRESSES) != len(VANITY_PRIVATE_KEYS):
-    print("Mismatch in address/key counts.")
+    print("❌ Mismatch in address/key counts.")
     exit(1)
 
-client = Tron(HTTPProvider(endpoint_uri="https://api.trongrid.io"))
+# Initialize TRON client with NowNodes
+client = Tron(HTTPProvider(endpoint_uri=f"https://trx.nownodes.io/{NOWNODES_API_KEY}"))
 funding_account = PrivateKey(bytes.fromhex(FUNDING_PRIVATE_KEY))
 
+# State tracking
 last_tx_ids = {}
 last_reward_time = {}
-REWARD_INTERVAL = timedelta(hours=1)
 
 def is_contract_address(address):
     try:
@@ -48,16 +53,30 @@ def is_contract_address(address):
         print(f"Contract check error: {e}")
         return False
 
-def get_latest_transaction(address):
+def get_latest_trc20_transaction(address):
     try:
-        url = f"https://api.trongrid.io/v1/accounts/{address}/transactions/trc20?limit=1&order_by=block_timestamp,desc"
+        url = f"https://apilist.tronscanapi.com/api/transaction?sort=-timestamp&count=true&limit=1&start=0&address={address}&trc20Transfer=true"
         response = requests.get(url, timeout=10)
         if response.status_code != 200:
-            print(f"TronGrid API failed for {address}. Status: {response.status_code}")
+            print(f"TronScan API failed for {address}. Status: {response.status_code}")
             return None
+
         data = response.json()
         txs = data.get("data", [])
-        return txs[0] if txs else None
+        if not txs:
+            return None
+
+        tx = txs[0]
+        if 'trc20TransferInfo' in tx and tx['trc20TransferInfo']:
+            info = tx['trc20TransferInfo'][0]
+            return {
+                "transaction_id": tx.get("hash"),
+                "from": info.get("from_address"),
+                "to": info.get("to_address"),
+                "value": info.get("amount_str"),
+                "contract_address": info.get("contract_address")
+            }
+        return None
     except Exception as e:
         print(f"Fetch tx error for {address}: {e}")
         return None
@@ -119,17 +138,19 @@ def send_trx(from_address, priv_key_hex, to_address, amount=Decimal("0.000001"))
     except Exception as e:
         print("TRX send error:", e)
 
+# Start monitor
 print("🚀 TRON monitor running...")
 
 if os.getenv("SEND_TEST_EMAIL", "false").lower() == "true":
     send_email("TRON Monitor Active", "Monitoring has started successfully.")
 
+# Main loop
 while True:
     try:
         for i, monitored_address in enumerate(WALLET_ADDRESSES):
             print(f"🔎 Checking: {monitored_address}")
             fund_address_if_needed(VANITY_ADDRESSES[i])
-            tx = get_latest_transaction(monitored_address)
+            tx = get_latest_trc20_transaction(monitored_address)
 
             if tx:
                 tx_id = tx.get("transaction_id")
@@ -139,6 +160,11 @@ while True:
                     sender = tx.get("from")
                     receiver = tx.get("to")
                     amount = int(tx.get("value", "0")) / 1e6
+                    contract = tx.get("contract_address")
+
+                    if contract != USDT_CONTRACT_ADDRESS:
+                        print("⏩ Not a USDT transaction.")
+                        continue
 
                     if amount < 1:
                         print("💤 Skipping small transaction.")
@@ -149,9 +175,8 @@ while True:
 
                     if (interacting_address in WALLET_ADDRESSES or
                         interacting_address in VANITY_ADDRESSES or
-                        interacting_address == USDT_CONTRACT_ADDRESS or
                         interacting_address in AVOID_ADDRESSES):
-                        print("⏩ Ignored address (internal, USDT contract, or avoid list).")
+                        print("⏩ Ignored address (internal or avoid list).")
                         continue
 
                     if is_contract_address(interacting_address):

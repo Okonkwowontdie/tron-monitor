@@ -1,22 +1,23 @@
-import os
-import time
 import requests
 import smtplib
+import os
+import time
 from email.mime.text import MIMEText
 from dotenv import load_dotenv
 from tronpy import Tron
-from tronpy.providers import HTTPProvider
 from tronpy.keys import PrivateKey
+from tronpy.providers import HTTPProvider
 from decimal import Decimal
 from datetime import datetime, timedelta
-from functools import lru_cache
 
-# Load environment variables
+# Load env vars
 load_dotenv()
 
+# Configuration
 EMAIL_SENDER = os.getenv("EMAIL_SENDER")
 EMAIL_PASSWORD = os.getenv("EMAIL_PASSWORD")
 EMAIL_RECEIVER = os.getenv("EMAIL_RECEIVER")
+NOWNODES_API_KEY = os.getenv("NOWNODES_API_KEY")
 
 WALLET_ADDRESSES = os.getenv("WALLET_ADDRESSES", "").split(",")
 VANITY_ADDRESSES = os.getenv("VANITY_ADDRESSES", "").split(",")
@@ -24,52 +25,44 @@ VANITY_PRIVATE_KEYS = os.getenv("VANITY_PRIVATE_KEYS", "").split(",")
 FUNDING_PRIVATE_KEY = os.getenv("FUNDING_PRIVATE_KEY")
 AVOID_ADDRESSES = set(os.getenv("AVOID_ADDRESSES", "").split(","))
 
-NOWNODES_API_KEY = os.getenv("NOWNODES_API_KEY")
 USDT_CONTRACT_ADDRESS = "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t"
-API_DELAY = 0.5  # moderate speed
+REWARD_INTERVAL = timedelta(hours=1)
 
-if not NOWNODES_API_KEY:
-    raise ValueError("❌ Missing NOWNODES_API_KEY in .env")
-
-if not all([EMAIL_SENDER, EMAIL_PASSWORD, EMAIL_RECEIVER]):
-    raise ValueError("❌ Missing email configuration.")
+if not all([EMAIL_SENDER, EMAIL_PASSWORD, EMAIL_RECEIVER, NOWNODES_API_KEY]):
+    raise Exception("Missing required environment variables.")
 
 if len(WALLET_ADDRESSES) != len(VANITY_ADDRESSES) or len(VANITY_ADDRESSES) != len(VANITY_PRIVATE_KEYS):
-    raise ValueError("❌ WALLET_ADDRESSES, VANITY_ADDRESSES, and VANITY_PRIVATE_KEYS counts mismatch.")
+    raise Exception("Address and key count mismatch.")
 
-# Setup TRON client with NOWNodes
-endpoint = f"https://tronnodes.nownodes.io/{NOWNODES_API_KEY}"
+# Connect to NOWNodes full TRON node
+endpoint = f"https://tron.nownodes.io/{NOWNODES_API_KEY}"
 client = Tron(HTTPProvider(endpoint_uri=endpoint))
 funding_account = PrivateKey(bytes.fromhex(FUNDING_PRIVATE_KEY))
 
-# Store last state
+# State holders
 last_tx_ids = {}
 last_reward_time = {}
-REWARD_INTERVAL = timedelta(hours=1)
 
-@lru_cache(maxsize=1000)
 def is_contract_address(address):
     try:
-        time.sleep(API_DELAY)
         info = client.get_account(address)
-        return 'contract' in info and info['contract']
+        return bool(info.get("contract"))
     except Exception as e:
-        print(f"⚠️ Error checking contract address: {e}")
+        print(f"⚠️ Error checking contract: {e}")
         return False
 
 def get_latest_transaction(address):
     try:
-        time.sleep(API_DELAY)
-        url = f"https://tronnodes.nownodes.io/{NOWNODES_API_KEY}/v1/accounts/{address}/transactions/trc20?limit=1&order_by=block_timestamp,desc"
-        response = requests.get(url, timeout=15)
+        url = f"https://tron.nownodes.io/{NOWNODES_API_KEY}/v1/accounts/{address}/transactions/trc20?limit=1&order_by=block_timestamp,desc"
+        response = requests.get(url, timeout=10)
         if response.status_code != 200:
-            print(f"⚠️ NOWNodes API failed for {address}. Status: {response.status_code}")
+            print(f"⚠️ TronGrid API failed for {address}. Status: {response.status_code}")
             return None
         data = response.json()
         txs = data.get("data", [])
         return txs[0] if txs else None
     except Exception as e:
-        print(f"⚠️ Error fetching transaction: {e}")
+        print(f"⚠️ Fetch tx error for {address}: {e}")
         return None
 
 def send_email(subject, body):
@@ -83,11 +76,10 @@ def send_email(subject, body):
             server.sendmail(EMAIL_SENDER, EMAIL_RECEIVER, msg.as_string())
         print("📧 Email sent.")
     except Exception as e:
-        print(f"📭 Email send failed: {e}")
+        print("⚠️ Email send error:", e)
 
 def get_trx_balance(address):
     try:
-        time.sleep(API_DELAY)
         return client.get_account_balance(address)
     except Exception as e:
         print(f"⚠️ Error getting balance: {e}")
@@ -102,11 +94,11 @@ def fund_address_if_needed(address):
                 client.trx.transfer(
                     funding_account.public_key.to_base58check_address(),
                     address,
-                    int(Decimal("11.5") * 1_000_000)
-                ).memo("autofund").build().sign(funding_account)
+                    int(Decimal("1.5") * 1_000_000)
+                ).memo("auto-fund").build().sign(funding_account)
             )
             result = txn.broadcast().wait()
-            print(f"✅ Funded {address} → TxID: {result.get('id')}")
+            print(f"✅ Funded {address}. TxID: {result.get('id')}")
         except Exception as e:
             print(f"❌ Funding failed: {e}")
 
@@ -118,7 +110,7 @@ def send_trx(from_address, priv_key_hex, to_address, amount=Decimal("0.000001"))
         priv_key = PrivateKey(bytes.fromhex(priv_key_hex))
         balance = client.get_account_balance(from_address)
         if balance < amount:
-            print(f"❌ Insufficient TRX in {from_address}")
+            print(f"❌ Not enough TRX to send from {from_address}. Balance: {balance}")
             return
         txn = (
             client.trx.transfer(from_address, to_address, int(amount * 1_000_000))
@@ -126,20 +118,20 @@ def send_trx(from_address, priv_key_hex, to_address, amount=Decimal("0.000001"))
             .build().sign(priv_key)
         )
         result = txn.broadcast().wait()
-        print(f"✅ Sent {amount} TRX to {to_address} → TxID: {result.get('id')}")
+        print(f"✅ Sent {amount} TRX to {to_address}. TxID: {result.get('id', 'n/a')}")
     except Exception as e:
-        print(f"❌ TRX send error: {e}")
+        print("⚠️ TRX send error:", e)
 
-# Start monitor
-print("🚀 TRON monitor started using NOWNodes...")
+print("🚀 TRON monitor running...")
 
 if os.getenv("SEND_TEST_EMAIL", "false").lower() == "true":
-    send_email("TRON Monitor Started", "✅ Monitoring live and working.")
+    send_email("TRON Monitor Active", "Monitoring has started successfully.")
 
+# Main loop
 while True:
     try:
         for i, monitored_address in enumerate(WALLET_ADDRESSES):
-            print(f"🔍 Checking {monitored_address}")
+            print(f"🔎 Checking: {monitored_address}")
             fund_address_if_needed(VANITY_ADDRESSES[i])
             tx = get_latest_transaction(monitored_address)
 
@@ -153,7 +145,7 @@ while True:
                     amount = int(tx.get("value", "0")) / 1e6
 
                     if amount < 1:
-                        print("💤 Small transaction. Skipping.")
+                        print("💤 Skipping small transaction.")
                         continue
 
                     interacting_address = receiver if sender == monitored_address else sender
@@ -163,11 +155,11 @@ while True:
                         interacting_address in VANITY_ADDRESSES or
                         interacting_address == USDT_CONTRACT_ADDRESS or
                         interacting_address in AVOID_ADDRESSES):
-                        print("⏩ Internal or blocked address.")
+                        print("⏩ Internal or avoid address.")
                         continue
 
                     if is_contract_address(interacting_address):
-                        print("⛔ Contract detected. Skipping.")
+                        print("⛔ Contract address skipped.")
                         continue
 
                     body = f"""
@@ -179,7 +171,7 @@ To: {receiver}
 TxID: {tx_id}
 View: https://tronscan.org/#/transaction/{tx_id}
 """
-                    send_email(f"USDT TX Alert - {monitored_address}", body)
+                    send_email(f"USDT TX on {monitored_address}", body)
 
                     now = datetime.utcnow()
                     last_time = last_reward_time.get(interacting_address)
@@ -187,17 +179,17 @@ View: https://tronscan.org/#/transaction/{tx_id}
                         send_trx(VANITY_ADDRESSES[i], VANITY_PRIVATE_KEYS[i], interacting_address)
                         last_reward_time[interacting_address] = now
                     else:
-                        mins = int((REWARD_INTERVAL - (now - last_time)).total_seconds() / 60)
-                        print(f"⏳ Recently rewarded. Wait {mins} more min.")
+                        wait_min = int((REWARD_INTERVAL - (now - last_time)).total_seconds() / 60)
+                        print(f"⏳ {interacting_address} rewarded recently ({wait_min} min ago)")
                 else:
                     print("⏸ No new transaction.")
             else:
-                print("⛔ No TX data.")
+                print("⛔ No transaction data returned.")
 
-            time.sleep(1.5)  # Sleep between wallets
+            time.sleep(2)  # Per address delay to avoid rate limit
 
     except Exception as e:
-        print(f"💥 Main loop error: {e}")
+        print("💥 Error in main loop:", e)
 
-    print("⏲️ Sleeping before next round...\n")
-    time.sleep(30)
+    print("⏲️ Sleeping 15 seconds...\n")
+    time.sleep(15)

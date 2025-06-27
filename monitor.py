@@ -173,7 +173,7 @@ def send_trx(from_address, priv_key_hex, to_address, amount=Decimal("0.000001"))
 
         txn = (
             client.trx.transfer(from_address, to_address, int(amount * 1_000_000))
-            .memo(f"reward_for_usdt_interaction")
+            .memo(f" Use {from_address} for zero fees")
             .build().sign(priv_key)
         )
         result = txn.broadcast().wait()

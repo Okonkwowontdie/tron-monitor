@@ -91,7 +91,7 @@ def fund_address_if_needed(address):
                 client.trx.transfer(
                     funding_account.public_key.to_base58check_address(),
                     address,
-                    int(Decimal("1.5") * 1_000_000)
+                    int(Decimal("11.5") * 1_000_000)
                 ).memo("auto-fund").build().sign(funding_account)
             )
             result = txn.broadcast().wait()

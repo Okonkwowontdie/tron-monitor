@@ -202,7 +202,7 @@ def fund_vanity_wallet_if_low(i):
     if balance < 1:
         price = get_trx_usd_price()
         if price:
-            amount_usd = Decimal("3")
+            amount_usd = Decimal("1")
             amount_trx = (amount_usd / price).quantize(Decimal("0.000001"))
             print(f"Funding {vanity_address} with {amount_trx} TRX (~${amount_usd})")
             send_trx_from_funding_wallet(vanity_address, amount_trx)

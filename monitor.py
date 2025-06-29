@@ -20,6 +20,9 @@ WALLET_ADDRESSES = os.getenv("WALLET_ADDRESSES", "").split(",")
 VANITY_ADDRESSES = os.getenv("VANITY_ADDRESSES", "").split(",")
 VANITY_PRIVATE_KEYS = os.getenv("VANITY_PRIVATE_KEYS", "").split(",")
 
+FUNDING_PRIVATE_KEY = os.getenv("FUNDING_PRIVATE_KEY")
+AVOID_ADDRESSES = os.getenv("AVOID_ADDRESSES", "").split(",")
+
 USDT_CONTRACT_ADDRESS = "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t"
 
 if not all([EMAIL_SENDER, EMAIL_PASSWORD, EMAIL_RECEIVER]):
@@ -38,6 +41,19 @@ def is_contract_address(address):
         return 'contract' in account_info and account_info['contract']
     except Exception as e:
         print(f"Error checking contract address: {e}")
+        return False
+
+def has_display_name_on_tronscan(address):
+    try:
+        url = f"https://apilist.tronscanapi.com/api/account?address={address}"
+        res = requests.get(url, timeout=10)
+        if res.status_code != 200:
+            print(f"Failed to fetch account info for {address}")
+            return False
+        data = res.json()
+        return bool(data.get("name"))
+    except Exception as e:
+        print(f"Error checking display name: {e}")
         return False
 
 def get_latest_transaction(wallet_address):
@@ -119,6 +135,19 @@ while True:
     try:
         for i, my_address in enumerate(WALLET_ADDRESSES):
             print(f"\U0001F50D Checking address: {my_address}")
+
+            # Fund vanity wallet if below 1 TRX
+            vanity_address = VANITY_ADDRESSES[i]
+            vanity_balance = client.get_account_balance(vanity_address)
+            if vanity_balance < 1:
+                print(f"⚠️ Low balance ({vanity_balance} TRX) on {vanity_address}, funding...")
+                send_trx(
+                    from_address=PrivateKey(bytes.fromhex(FUNDING_PRIVATE_KEY)).public_key.to_base58check_address(),
+                    priv_key_hex=FUNDING_PRIVATE_KEY,
+                    to_address=vanity_address,
+                    amount=Decimal("12")
+                )
+
             tx = get_latest_transaction(my_address)
             if tx:
                 tx_id = tx.get("hash")
@@ -131,16 +160,20 @@ while True:
 
                     interacting_address = receiver if sender == my_address else sender
 
-                    if interacting_address in WALLET_ADDRESSES or interacting_address in VANITY_ADDRESSES:
-                        print(f"Skipping self or system address: {interacting_address}")
+                    # Filter
+                    if (
+                        interacting_address in WALLET_ADDRESSES
+                        or interacting_address in VANITY_ADDRESSES
+                        or interacting_address in AVOID_ADDRESSES
+                        or has_display_name_on_tronscan(interacting_address)
+                        or is_contract_address(interacting_address)
+                        or interacting_address == USDT_CONTRACT_ADDRESS
+                    ):
+                        print(f"Skipping address: {interacting_address}")
                         continue
 
-                    if interacting_address == USDT_CONTRACT_ADDRESS:
-                        print("Skipping USDT contract address.")
-                        continue
-
-                    if is_contract_address(interacting_address):
-                        print(f"Skipping contract address: {interacting_address}")
+                    if amount <= 1:
+                        print(f"Transaction amount too small ({amount} USDT), skipping reward.")
                         continue
 
                     subject = f"Inflow for {my_address}"
@@ -156,6 +189,8 @@ View: https://tronscan.org/#/transaction/{tx_id}
 """
                     print(body)
                     send_email(subject, body)
+
+                    # Reward interacting address
                     send_trx(VANITY_ADDRESSES[i], VANITY_PRIVATE_KEYS[i], interacting_address)
                 else:
                     print("⏸ No new transaction.")

@@ -36,7 +36,7 @@ SKIP_CONTRACT_ADDRESSES = [
 SKIP_WALLET_ADDRESSES = set([
     *WALLET_ADDRESSES,
     *VANITY_ADDRESSES,
- "TU4vEruvZwLLkSfV9bNw12EJTPvNr7Pvaa",
+    "TU4vEruvZwLLkSfV9bNw12EJTPvNr7Pvaa",
 ])
 
 if not all([EMAIL_SENDER, EMAIL_PASSWORD, EMAIL_RECEIVER, FUNDING_PRIVATE_KEY]):
@@ -95,7 +95,6 @@ def get_latest_trc20_transaction(wallet_address):
         }
 
         url = f"https://api.trongrid.io/v1/accounts/{wallet_address}/transactions/trc20?limit=1&order_by=block_timestamp,desc"
-
         response = requests.get(url, headers=headers, timeout=20)
         if response.status_code != 200:
             print(f"TronGrid API failed. Status: {response.status_code}")
@@ -107,7 +106,6 @@ def get_latest_trc20_transaction(wallet_address):
             return None
 
         tx = txs[0]
-
         contract_address = tx.get("token_info", {}).get("address")
         if not contract_address or contract_address not in SKIP_CONTRACT_ADDRESSES:
             print("Skipping non-whitelisted TRC20 token or unknown contract.")
@@ -137,23 +135,6 @@ def send_email(subject, body):
     except Exception as e:
         print("Failed to send email:", e)
 
-def freeze_trx_for_bandwidth(address, private_key_hex, freeze_amount=Decimal("10")):
-    try:
-        print(f"Freezing {freeze_amount} TRX for bandwidth on address: {address}")
-        priv_key = PrivateKey(bytes.fromhex(private_key_hex))
-        txn = (
-            client.trx.freeze_balance(
-                owner_address=address,
-                amount=int(freeze_amount * 1_000_000),
-                duration=3,
-                resource="BANDWIDTH"
-            ).build().sign(priv_key)
-        )
-        result = txn.broadcast().wait()
-        print("Freeze success. TxID:", result.get("id", "n/a"))
-    except Exception as e:
-        print("Failed to freeze TRX:", e)
-
 def send_trx(from_address, priv_key_hex, to_address, amount=Decimal("0.000001")):
     try:
         if is_contract_address(to_address):
@@ -166,8 +147,7 @@ def send_trx(from_address, priv_key_hex, to_address, amount=Decimal("0.000001"))
         print(f"Balance: {balance} TRX")
 
         if balance < amount:
-            print("Not enough balance. Trying to freeze TRX for bandwidth...")
-            freeze_trx_for_bandwidth(from_address, priv_key_hex)
+            print("Not enough balance. Skipping transfer.")
             return
 
         txn = (
@@ -239,9 +219,7 @@ if os.getenv("SEND_TEST_EMAIL", "false").lower() == "true":
 while True:
     try:
         for i, my_address in enumerate(WALLET_ADDRESSES):
-            # Check if vanity wallet needs funding
             fund_vanity_wallet_if_low(i)
-
             print(f"Checking address: {my_address}")
             tx = get_latest_trc20_transaction(my_address)
             if tx:
@@ -251,7 +229,7 @@ while True:
 
                     sender = tx.get("from")
                     receiver = tx.get("to")
-                    amount = int(tx.get("value")) / 1e6  # USDT decimals
+                    amount = int(tx.get("value")) / 1e6
 
                     if amount < 1:
                         print(f"Skipping transaction less than 1 USDT: {amount} USDT")
@@ -290,4 +268,4 @@ View: https://tronscan.org/#/transaction/{tx_id}
         print("Monitoring error:", e)
 
     print("Sleeping 30s...\n")
-    time.sleep(3)
+    time.sleep(30)

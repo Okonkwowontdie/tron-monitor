@@ -8,10 +8,10 @@ from tronpy import Tron
 from tronpy.keys import PrivateKey
 from tronpy.providers import HTTPProvider
 from decimal import Decimal
-import itertools
 
-# Load env vars
+# Load environment variables
 load_dotenv()
+
 EMAIL_SENDER = os.getenv("EMAIL_SENDER")
 EMAIL_PASSWORD = os.getenv("EMAIL_PASSWORD")
 EMAIL_RECEIVER = os.getenv("EMAIL_RECEIVER")
@@ -19,8 +19,10 @@ EMAIL_RECEIVER = os.getenv("EMAIL_RECEIVER")
 WALLET_ADDRESSES = os.getenv("WALLET_ADDRESSES", "").split(",")
 VANITY_ADDRESSES = os.getenv("VANITY_ADDRESSES", "").split(",")
 VANITY_PRIVATE_KEYS = os.getenv("VANITY_PRIVATE_KEYS", "").split(",")
-TRONGRID_API_KEYS = os.getenv("TRONGRID_API_KEY", "").split(",")
+
 FUNDING_PRIVATE_KEY = os.getenv("FUNDING_PRIVATE_KEY")
+NOWNODES_API_KEY = os.getenv("NOWNODES_API_KEY")
+NOWNODES_ENDPOINT = f"https://trx.nownodes.io/{NOWNODES_API_KEY}"
 
 USDT_CONTRACT_ADDRESS = "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t"
 SKIP_CONTRACT_ADDRESSES = [
@@ -34,7 +36,7 @@ SKIP_WALLET_ADDRESSES = set([
     "TU4vEruvZwLLkSfV9bNw12EJTPvNr7Pvaa",
 ])
 
-if not all([EMAIL_SENDER, EMAIL_PASSWORD, EMAIL_RECEIVER, FUNDING_PRIVATE_KEY]):
+if not all([EMAIL_SENDER, EMAIL_PASSWORD, EMAIL_RECEIVER, FUNDING_PRIVATE_KEY, NOWNODES_API_KEY]):
     print("Missing required config")
     exit(1)
 
@@ -42,8 +44,7 @@ if len(WALLET_ADDRESSES) != len(VANITY_ADDRESSES) or len(VANITY_ADDRESSES) != le
     print("Wallets, vanity addresses or keys count mismatch")
     exit(1)
 
-trongrid_key_cycle = itertools.cycle(TRONGRID_API_KEYS)
-client = Tron(HTTPProvider(endpoint_uri="https://api.trongrid.io"))
+client = Tron(HTTPProvider(endpoint_uri=NOWNODES_ENDPOINT))
 last_tx_ids = {}
 
 def send_email(subject, body):
@@ -67,37 +68,27 @@ def is_contract_address(address):
         return False
 
 def has_public_name(address):
-    try:
-        headers = {
-            "TRON-PRO-API-KEY": next(trongrid_key_cycle),
-            "accept": "application/json"
-        }
-        url = f"https://api.trongrid.io/v1/accounts/{address}"
-        r = requests.get(url, headers=headers, timeout=10)
-        data = r.json().get("data", [])
-        return bool(data and data[0].get("name"))
-    except:
-        return False
+    # TronGrid feature not available in NowNodes – return False
+    return False
 
 def get_latest_trc20_transaction(address):
     try:
-        headers = {
-            "TRON-PRO-API-KEY": next(trongrid_key_cycle),
-            "accept": "application/json"
-        }
-        url = f"https://api.trongrid.io/v1/accounts/{address}/transactions/trc20?limit=1&order_by=block_timestamp,desc"
-        r = requests.get(url, headers=headers, timeout=10)
-        data = r.json().get("data", [])
-        if not data:
+        contract = client.get_contract(USDT_CONTRACT_ADDRESS)
+        events = contract.events.Transfer.list_events(
+            argument_filters={"to": address},
+            only_confirmed=True,
+            limit=1,
+            order_by="block_timestamp",
+            sort="desc"
+        )
+        if not events:
             return None
-        tx = data[0]
-        if tx.get("token_info", {}).get("address") not in SKIP_CONTRACT_ADDRESSES:
-            return None
+        event = events[0]
         return {
-            "transaction_id": tx.get("transaction_id"),
-            "from": tx.get("from"),
-            "to": tx.get("to"),
-            "value": tx.get("value")
+            "transaction_id": event["transaction_id"],
+            "from": event["from"],
+            "to": event["to"],
+            "value": event["value"]
         }
     except Exception as e:
         print("TRC20 fetch error:", e)
@@ -159,7 +150,7 @@ while True:
             tx = get_latest_trc20_transaction(addr)
             if not tx:
                 print(f"No TRC20 tx for {addr}")
-                time.sleep(1)
+                time.sleep(2)
                 continue
 
             txid = tx.get("transaction_id")
@@ -191,9 +182,9 @@ View: https://tronscan.org/#/transaction/{txid}
             send_email(f"V {addr}", body)
             send_trx(VANITY_ADDRESSES[i], VANITY_PRIVATE_KEYS[i], other_addr)
 
-            time.sleep(1.5)  # respect rate limit
+            time.sleep(2)
     except Exception as e:
         print("Loop error:", e)
 
     print("Sleeping 60s...\n")
-    time.sleep(1)
+    time.sleep(60)

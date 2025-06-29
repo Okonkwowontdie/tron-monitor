@@ -201,4 +201,4 @@ View: https://tronscan.org/#/transaction/{tx_id}
         time.sleep(1)
     except Exception as e:
         print("Loop error:", e)
-    time.sleep(120)
+    time.sleep(10)

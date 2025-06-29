@@ -290,4 +290,4 @@ View: https://tronscan.org/#/transaction/{tx_id}
         print("Monitoring error:", e)
 
     print("Sleeping 30s...\n")
-    time.sleep(30)
+    time.sleep(120)

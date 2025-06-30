@@ -48,7 +48,8 @@ if len(WALLET_ADDRESSES) != len(VANITY_ADDRESSES) or len(WALLET_ADDRESSES) != le
     exit(1)
 
 # 🔁 Hybrid Setup: Use local node for sending, Trongrid for reading
-local_node = Tron(HTTPProvider(endpoint_uri="http://localhost:8090"))
+local_node = Tron(HTTPProvider(endpoint_uri="http://tron-node:8090"))
+
 
 last_tx_ids = {}
 

